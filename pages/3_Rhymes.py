@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 from db import fetch_all, insert_row, insert_rows
+from auth import require_login
 
 st.set_page_config(page_title="Rhymes", layout="wide")
+require_login()
 st.title("Rhyme Reference")
 
 data = fetch_all("rhymes", order_col="rhyme_group")

@@ -1,6 +1,8 @@
 import streamlit as st
+from auth import require_login
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
+require_login()
 
 st.title("My Dashboard")
 

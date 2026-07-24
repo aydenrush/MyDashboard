@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 from db import fetch_all, insert_row, insert_rows, get_config, upsert_config
 from colors import apply_nfl_theme, NFL_COLORS
+from auth import require_login
 
 st.set_page_config(page_title="Madden Franchise", layout="wide")
+require_login()
 
 GAMES = {
     "Madden 24": "m24",

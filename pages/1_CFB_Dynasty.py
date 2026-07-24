@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 from db import fetch_all, insert_row, insert_rows
 from colors import apply_college_theme
+from auth import require_login
 
 st.set_page_config(page_title="CFB Dynasty", layout="wide")
+require_login()
 
 GAMES = {
     "CFB 25": "cfb25_draft_picks",
