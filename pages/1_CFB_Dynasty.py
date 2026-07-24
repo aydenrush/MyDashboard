@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, insert_row
+from db import fetch_all, insert_row, insert_rows
+from colors import apply_college_theme
 
 st.set_page_config(page_title="CFB Dynasty", layout="wide")
-st.title("CFB Dynasty Draft Tracker")
 
 GAMES = {
     "CFB 25": "cfb25_draft_picks",
@@ -19,13 +19,17 @@ df = pd.DataFrame(data)
 
 if df.empty:
     st.info("No draft pick data loaded yet. Run upload_data.py to populate.")
+
+schools = sorted(df["school"].unique()) if not df.empty else []
+selected_school = st.selectbox("School", schools) if schools else None
+
+apply_college_theme(selected_school)
+st.title(f"{selected_game} Draft Tracker")
+
+if df.empty or not selected_school:
     st.stop()
 
-df = df.sort_values(["school", "year", "round"])
-
-schools = sorted(df["school"].unique())
-selected_school = st.selectbox("School", schools)
-school_df = df[df["school"] == selected_school]
+school_df = df[df["school"] == selected_school].sort_values(["year", "round"])
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Picks", len(school_df))
@@ -33,7 +37,7 @@ first_count = len(school_df[school_df["round"] == "1st"])
 col2.metric("1st Rounders", first_count)
 years_active = school_df["year"].nunique()
 col3.metric("Draft Classes", years_active)
-if len(school_df) > 0 and years_active > 0:
+if years_active > 0:
     col4.metric("Avg Picks/Year", f"{len(school_df) / years_active:.1f}")
 
 st.divider()
@@ -71,13 +75,13 @@ st.dataframe(
 
 st.divider()
 
-tab1, tab2 = st.tabs(["Draft Picks by Year", "Picks by Round"])
+tab_chart1, tab_chart2 = st.tabs(["Draft Picks by Year", "Picks by Round"])
 
-with tab1:
+with tab_chart1:
     by_year = school_df.groupby("year").size().reset_index(name="count")
     st.bar_chart(by_year.set_index("year")["count"])
 
-with tab2:
+with tab_chart2:
     round_order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"]
     by_round = school_df.groupby("round").size().reset_index(name="count")
     by_round["round"] = pd.Categorical(by_round["round"], categories=round_order, ordered=True)
@@ -85,7 +89,10 @@ with tab2:
     st.bar_chart(by_round.set_index("round")["count"])
 
 st.divider()
-with st.expander("Add Draft Pick"):
+
+add_single, add_bulk = st.tabs(["Add Single Pick", "Bulk Add"])
+
+with add_single:
     with st.form("add_pick"):
         fc1, fc2, fc3 = st.columns(3)
         new_school = fc1.text_input("School", value=selected_school)
@@ -115,3 +122,78 @@ with st.expander("Add Draft Pick"):
                 st.rerun()
             else:
                 st.error("Player name is required.")
+
+with add_bulk:
+    st.markdown("Paste tab-separated rows. Columns:")
+    st.code("Year\tName\tPosition\tClass\tDraft Age\tHeight\tWeight\tNumber\tRace\tRound\tNotes")
+    bulk_school = st.text_input("School for all rows", value=selected_school, key="bulk_school")
+    bulk_text = st.text_area("Paste rows here", height=200, key="bulk_cfb")
+
+    if st.button("Preview", key="preview_cfb"):
+        if bulk_text.strip():
+            rows = []
+            for line in bulk_text.strip().split("\n"):
+                cols = line.split("\t")
+                if len(cols) >= 2:
+                    rows.append({
+                        "Year": cols[0] if len(cols) > 0 else "",
+                        "Name": cols[1] if len(cols) > 1 else "",
+                        "Position": cols[2] if len(cols) > 2 else "",
+                        "Class": cols[3] if len(cols) > 3 else "",
+                        "Draft Age": cols[4] if len(cols) > 4 else "",
+                        "Height": cols[5] if len(cols) > 5 else "",
+                        "Weight": cols[6] if len(cols) > 6 else "",
+                        "Number": cols[7] if len(cols) > 7 else "",
+                        "Race": cols[8] if len(cols) > 8 else "",
+                        "Round": cols[9] if len(cols) > 9 else "",
+                        "Notes": cols[10] if len(cols) > 10 else "",
+                    })
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                st.session_state["bulk_cfb_parsed"] = rows
+
+    if st.button("Upload", key="upload_cfb"):
+        parsed = st.session_state.get("bulk_cfb_parsed", [])
+        if not parsed:
+            st.error("Preview first to validate the data.")
+        else:
+            db_rows = []
+            for r in parsed:
+                name = r.get("Name", "").strip()
+                if not name:
+                    continue
+                year_val = None
+                try:
+                    year_val = int(float(r.get("Year", "")))
+                except (ValueError, TypeError):
+                    pass
+                age_val = None
+                try:
+                    age_val = int(float(r.get("Draft Age", "")))
+                except (ValueError, TypeError):
+                    pass
+                weight_val = None
+                try:
+                    weight_val = float(r.get("Weight", "").replace("lbs", "").strip())
+                except (ValueError, TypeError):
+                    pass
+                num = r.get("Number", "").replace("#", "").strip() or None
+                db_rows.append({
+                    "school": bulk_school,
+                    "year": year_val,
+                    "name": name,
+                    "position": r.get("Position", "").strip() or None,
+                    "class": r.get("Class", "").strip() or None,
+                    "draft_age": age_val,
+                    "height": r.get("Height", "").strip() or None,
+                    "weight": weight_val,
+                    "number": num,
+                    "race": r.get("Race", "").strip() or None,
+                    "round": r.get("Round", "").strip() or None,
+                    "additional_notes": r.get("Notes", "").strip() or None,
+                })
+            if db_rows:
+                insert_rows(table, db_rows)
+                st.success(f"Uploaded {len(db_rows)} picks.")
+                st.session_state.pop("bulk_cfb_parsed", None)
+                st.rerun()

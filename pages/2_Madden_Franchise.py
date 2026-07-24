@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, insert_row
+from db import fetch_all, insert_row, insert_rows, get_config, upsert_config
+from colors import apply_nfl_theme, NFL_COLORS
 
 st.set_page_config(page_title="Madden Franchise", layout="wide")
-st.title("Madden Franchise Records")
 
 GAMES = {
     "Madden 24": "m24",
@@ -30,16 +30,46 @@ if seasons_df.empty:
 franchises = sorted(seasons_df["franchise"].unique())
 selected_franchise = st.selectbox("Franchise", franchises)
 
+# Primary team config
+config = get_config(prefix, selected_franchise)
+primary_team = config["primary_team"] if config else None
+
+# Apply theme based on primary team
+apply_nfl_theme(primary_team)
+
+team_label = ""
+if primary_team and primary_team in NFL_COLORS:
+    team_label = f" -- {NFL_COLORS[primary_team][2]}"
+st.title(f"{selected_game}: {selected_franchise}{team_label}")
+
+# Settings in sidebar
+with st.sidebar:
+    st.subheader("Franchise Settings")
+    all_teams = sorted(NFL_COLORS.keys())
+    team_options = [f"{abbr} - {NFL_COLORS[abbr][2]}" for abbr in all_teams]
+    current_idx = 0
+    if primary_team and primary_team in all_teams:
+        current_idx = all_teams.index(primary_team)
+    sel_team_display = st.selectbox("Primary Team", team_options, index=current_idx)
+    new_primary = sel_team_display.split(" - ")[0]
+    if st.button("Save Primary Team"):
+        upsert_config(prefix, selected_franchise, new_primary)
+        st.success(f"Set to {new_primary}")
+        st.rerun()
+
 fran_seasons = seasons_df[seasons_df["franchise"] == selected_franchise].sort_values("year")
 fran_wins = wins_df[wins_df["franchise"] == selected_franchise].sort_values("year") if not wins_df.empty else pd.DataFrame()
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Seasons Played", len(fran_seasons))
-sb_count = fran_seasons["sb_winner"].notna().sum()
-col2.metric("Seasons w/ SB Data", sb_count)
-if not fran_wins.empty:
-    user_team = fran_wins.groupby("team")["wins"].sum().idxmax()
-    col3.metric("Top Win Team", user_team)
+sb_wins = fran_seasons["sb_winner"].notna().sum()
+col2.metric("Seasons w/ SB Data", sb_wins)
+if not fran_wins.empty and primary_team:
+    my_wins = fran_wins[fran_wins["team"] == primary_team]["wins"].sum()
+    col3.metric(f"{primary_team} Total Wins", f"{my_wins:.0f}")
+elif not fran_wins.empty:
+    top_team = fran_wins.groupby("team")["wins"].sum().idxmax()
+    col3.metric("Top Win Team", top_team)
 
 st.divider()
 
@@ -63,13 +93,13 @@ with awards_tab:
 
     st.subheader("Award Counts")
     award_cols = ["sb_winner", "sb_mvp", "nfl_mvp", "opoy", "dpoy"]
-    for col_name in award_cols:
-        if col_name in fran_seasons.columns:
-            counts = fran_seasons[col_name].dropna().value_counts().head(5)
+    for acol in award_cols:
+        if acol in fran_seasons.columns:
+            counts = fran_seasons[acol].dropna().value_counts().head(5)
             if not counts.empty:
-                with st.expander(col_names.get(col_name, col_name)):
+                with st.expander(col_names.get(acol, acol)):
                     st.dataframe(counts.reset_index().rename(
-                        columns={"index": "Winner", col_name: "Winner", "count": "Times"}
+                        columns={"index": "Winner", acol: "Winner", "count": "Times"}
                     ), hide_index=True)
 
 with records_tab:
@@ -115,7 +145,10 @@ with allpro_tab:
         )
 
 st.divider()
-with st.expander("Add Season Record"):
+
+add_single, add_bulk = st.tabs(["Add Single Season", "Bulk Add Seasons"])
+
+with add_single:
     with st.form("add_season"):
         fc1, fc2 = st.columns(2)
         new_fran = fc1.selectbox("Franchise", franchises, key="new_fran")
@@ -128,9 +161,10 @@ with st.expander("Add Season Record"):
         new_coy = fc6.text_input("Coach of Year")
         new_opoy = fc7.text_input("OPOY")
         new_dpoy = fc8.text_input("DPOY")
-        fc9, fc10 = st.columns(2)
+        fc9, fc10, fc11 = st.columns(3)
         new_oroy = fc9.text_input("OROY")
         new_droy = fc10.text_input("DROY")
+        new_99 = fc11.text_input("99 Club")
 
         if st.form_submit_button("Add Season"):
             insert_row(seasons_table, {
@@ -139,6 +173,66 @@ with st.expander("Add Season Record"):
                 "nfl_mvp": new_nfl_mvp or None, "coach_of_year": new_coy or None,
                 "opoy": new_opoy or None, "dpoy": new_dpoy or None,
                 "oroy": new_oroy or None, "droy": new_droy or None,
+                "ninety_nine_club": new_99 or None,
             })
             st.success("Season added.")
             st.rerun()
+
+with add_bulk:
+    st.markdown("Paste tab-separated rows. Columns:")
+    st.code("Year\tSB Winner\tSB MVP\tNFL MVP\tCoach of Year\tOPOY\tDPOY\tOROY\tDROY\t99 Club")
+    bulk_fran = st.text_input("Franchise for all rows", value=selected_franchise, key="bulk_fran")
+    bulk_text = st.text_area("Paste rows here", height=200, key="bulk_madden")
+
+    if st.button("Preview", key="preview_madden"):
+        if bulk_text.strip():
+            rows = []
+            for line in bulk_text.strip().split("\n"):
+                cols = line.split("\t")
+                if len(cols) >= 1:
+                    rows.append({
+                        "Year": cols[0] if len(cols) > 0 else "",
+                        "SB Winner": cols[1] if len(cols) > 1 else "",
+                        "SB MVP": cols[2] if len(cols) > 2 else "",
+                        "NFL MVP": cols[3] if len(cols) > 3 else "",
+                        "Coach of Year": cols[4] if len(cols) > 4 else "",
+                        "OPOY": cols[5] if len(cols) > 5 else "",
+                        "DPOY": cols[6] if len(cols) > 6 else "",
+                        "OROY": cols[7] if len(cols) > 7 else "",
+                        "DROY": cols[8] if len(cols) > 8 else "",
+                        "99 Club": cols[9] if len(cols) > 9 else "",
+                    })
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                st.session_state["bulk_madden_parsed"] = rows
+
+    if st.button("Upload", key="upload_madden"):
+        parsed = st.session_state.get("bulk_madden_parsed", [])
+        if not parsed:
+            st.error("Preview first to validate the data.")
+        else:
+            db_rows = []
+            for r in parsed:
+                year_val = None
+                try:
+                    year_val = int(float(r.get("Year", "")))
+                except (ValueError, TypeError):
+                    continue
+                db_rows.append({
+                    "franchise": bulk_fran,
+                    "year": year_val,
+                    "sb_winner": r.get("SB Winner", "").strip() or None,
+                    "sb_mvp": r.get("SB MVP", "").strip() or None,
+                    "nfl_mvp": r.get("NFL MVP", "").strip() or None,
+                    "coach_of_year": r.get("Coach of Year", "").strip() or None,
+                    "opoy": r.get("OPOY", "").strip() or None,
+                    "dpoy": r.get("DPOY", "").strip() or None,
+                    "oroy": r.get("OROY", "").strip() or None,
+                    "droy": r.get("DROY", "").strip() or None,
+                    "ninety_nine_club": r.get("99 Club", "").strip() or None,
+                })
+            if db_rows:
+                insert_rows(seasons_table, db_rows)
+                st.success(f"Uploaded {len(db_rows)} seasons.")
+                st.session_state.pop("bulk_madden_parsed", None)
+                st.rerun()
