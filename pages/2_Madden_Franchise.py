@@ -11,7 +11,7 @@ GAMES = {
     "Madden 26": "m26",
 }
 
-selected_game = st.selectbox("Game", list(GAMES.keys()))
+selected_game = st.radio("Game", list(GAMES.keys()), horizontal=True)
 prefix = GAMES[selected_game]
 
 seasons_table = f"{prefix}_seasons"
@@ -24,17 +24,15 @@ seasons_df = pd.DataFrame(seasons_data)
 wins_df = pd.DataFrame(wins_data)
 
 if seasons_df.empty:
-    st.info("No Madden data loaded yet. Run upload_data.py to populate.")
+    st.info(f"No data loaded for {selected_game} yet.")
     st.stop()
 
 franchises = sorted(seasons_df["franchise"].unique())
 selected_franchise = st.selectbox("Franchise", franchises)
 
-# Primary team config
 config = get_config(prefix, selected_franchise)
 primary_team = config["primary_team"] if config else None
 
-# Apply theme based on primary team
 apply_nfl_theme(primary_team)
 
 team_label = ""
@@ -42,7 +40,6 @@ if primary_team and primary_team in NFL_COLORS:
     team_label = f" -- {NFL_COLORS[primary_team][2]}"
 st.title(f"{selected_game}: {selected_franchise}{team_label}")
 
-# Settings in sidebar
 with st.sidebar:
     st.subheader("Franchise Settings")
     all_teams = sorted(NFL_COLORS.keys())
@@ -57,8 +54,14 @@ with st.sidebar:
         st.success(f"Set to {new_primary}")
         st.rerun()
 
-fran_seasons = seasons_df[seasons_df["franchise"] == selected_franchise].sort_values("year")
-fran_wins = wins_df[wins_df["franchise"] == selected_franchise].sort_values("year") if not wins_df.empty else pd.DataFrame()
+fran_seasons = seasons_df[
+    seasons_df["franchise"] == selected_franchise
+].sort_values("year")
+fran_wins = (
+    wins_df[wins_df["franchise"] == selected_franchise].sort_values("year")
+    if not wins_df.empty
+    else pd.DataFrame()
+)
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Seasons Played", len(fran_seasons))
@@ -73,16 +76,20 @@ elif not fran_wins.empty:
 
 st.divider()
 
-awards_tab, records_tab, allpro_tab = st.tabs(["Season Awards", "Team Records", "All-Pro Teams"])
+awards_tab, records_tab, allpro_tab = st.tabs(
+    ["Season Awards", "Team Records", "All-Pro Teams"]
+)
 
 with awards_tab:
-    display_cols = ["year", "sb_winner", "sb_mvp", "nfl_mvp", "coach_of_year",
-                    "opoy", "dpoy", "oroy", "droy", "ninety_nine_club"]
+    display_cols = [
+        "year", "sb_winner", "sb_mvp", "nfl_mvp", "coach_of_year",
+        "opoy", "dpoy", "oroy", "droy", "ninety_nine_club",
+    ]
     col_names = {
         "year": "Year", "sb_winner": "SB Winner", "sb_mvp": "SB MVP",
         "nfl_mvp": "NFL MVP", "coach_of_year": "Coach of Year",
         "opoy": "OPOY", "dpoy": "DPOY", "oroy": "OROY", "droy": "DROY",
-        "ninety_nine_club": "99 Club"
+        "ninety_nine_club": "99 Club",
     }
     existing = [c for c in display_cols if c in fran_seasons.columns]
     st.dataframe(
@@ -98,9 +105,16 @@ with awards_tab:
             counts = fran_seasons[acol].dropna().value_counts().head(5)
             if not counts.empty:
                 with st.expander(col_names.get(acol, acol)):
-                    st.dataframe(counts.reset_index().rename(
-                        columns={"index": "Winner", acol: "Winner", "count": "Times"}
-                    ), hide_index=True)
+                    st.dataframe(
+                        counts.reset_index().rename(
+                            columns={
+                                "index": "Winner",
+                                acol: "Winner",
+                                "count": "Times",
+                            }
+                        ),
+                        hide_index=True,
+                    )
 
 with records_tab:
     if fran_wins.empty:
@@ -108,17 +122,23 @@ with records_tab:
     else:
         fran_wins_clean = fran_wins[fran_wins["wins"].notna()]
 
+        years_list = sorted(fran_wins_clean["year"].unique())
         sel_year = st.selectbox(
-            "Select Year",
-            sorted(fran_wins_clean["year"].unique()),
-            index=len(fran_wins_clean["year"].unique()) - 1 if len(fran_wins_clean["year"].unique()) > 0 else 0
+            "Select Year", years_list,
+            index=len(years_list) - 1 if years_list else 0,
         )
-        year_data = fran_wins_clean[fran_wins_clean["year"] == sel_year].sort_values("wins", ascending=False)
+        year_data = fran_wins_clean[
+            fran_wins_clean["year"] == sel_year
+        ].sort_values("wins", ascending=False)
         if not year_data.empty:
             st.bar_chart(year_data.set_index("team")["wins"])
 
         st.subheader("All-Time Team Wins")
-        total_wins = fran_wins_clean.groupby("team")["wins"].sum().sort_values(ascending=False)
+        total_wins = (
+            fran_wins_clean.groupby("team")["wins"]
+            .sum()
+            .sort_values(ascending=False)
+        )
         if not total_wins.empty:
             st.bar_chart(total_wins)
 
@@ -133,7 +153,7 @@ with allpro_tab:
         st.info("No All-Pro data for this game.")
     else:
         sel_ap_year = st.selectbox(
-            "Year", sorted(allpro_df["year"].unique()), key="ap_year"
+            "Year", sorted(allpro_df["year"].unique()), key="ap_year",
         )
         year_ap = allpro_df[allpro_df["year"] == sel_ap_year]
         st.dataframe(
@@ -146,13 +166,28 @@ with allpro_tab:
 
 st.divider()
 
-add_single, add_bulk = st.tabs(["Add Single Season", "Bulk Add Seasons"])
+NFL_DIVISIONS = {
+    "AFC East": ["BUF", "MIA", "NE", "NYJ"],
+    "AFC North": ["BAL", "CIN", "CLE", "PIT"],
+    "AFC South": ["HOU", "IND", "JAX", "TEN"],
+    "AFC West": ["DEN", "KC", "LAC", "LV"],
+    "NFC East": ["DAL", "NYG", "PHI", "WAS"],
+    "NFC North": ["CHI", "DET", "GB", "MIN"],
+    "NFC South": ["ATL", "CAR", "NO", "TB"],
+    "NFC West": ["ARI", "LAR", "SEA", "SF"],
+}
+
+add_single, add_bulk, add_wins = st.tabs(
+    ["Add Single Season", "Bulk Add Seasons", "Add Team Wins"]
+)
 
 with add_single:
     with st.form("add_season"):
         fc1, fc2 = st.columns(2)
         new_fran = fc1.selectbox("Franchise", franchises, key="new_fran")
-        new_year = fc2.number_input("Year", min_value=2023, max_value=2060, value=2027)
+        new_year = fc2.number_input(
+            "Year", min_value=2023, max_value=2060, value=2027,
+        )
         fc3, fc4, fc5 = st.columns(3)
         new_sb = fc3.text_input("SB Winner")
         new_mvp = fc4.text_input("SB MVP")
@@ -170,7 +205,8 @@ with add_single:
             insert_row(seasons_table, {
                 "franchise": new_fran, "year": new_year,
                 "sb_winner": new_sb or None, "sb_mvp": new_mvp or None,
-                "nfl_mvp": new_nfl_mvp or None, "coach_of_year": new_coy or None,
+                "nfl_mvp": new_nfl_mvp or None,
+                "coach_of_year": new_coy or None,
                 "opoy": new_opoy or None, "dpoy": new_dpoy or None,
                 "oroy": new_oroy or None, "droy": new_droy or None,
                 "ninety_nine_club": new_99 or None,
@@ -180,8 +216,13 @@ with add_single:
 
 with add_bulk:
     st.markdown("Paste tab-separated rows. Columns:")
-    st.code("Year\tSB Winner\tSB MVP\tNFL MVP\tCoach of Year\tOPOY\tDPOY\tOROY\tDROY\t99 Club")
-    bulk_fran = st.text_input("Franchise for all rows", value=selected_franchise, key="bulk_fran")
+    st.code(
+        "Year\tSB Winner\tSB MVP\tNFL MVP\tCoach of Year"
+        "\tOPOY\tDPOY\tOROY\tDROY\t99 Club"
+    )
+    bulk_fran = st.text_input(
+        "Franchise for all rows", value=selected_franchise, key="bulk_fran",
+    )
     bulk_text = st.text_area("Paste rows here", height=200, key="bulk_madden")
 
     if st.button("Preview", key="preview_madden"):
@@ -203,7 +244,10 @@ with add_bulk:
                         "99 Club": cols[9] if len(cols) > 9 else "",
                     })
             if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                st.dataframe(
+                    pd.DataFrame(rows), hide_index=True,
+                    use_container_width=True,
+                )
                 st.session_state["bulk_madden_parsed"] = rows
 
     if st.button("Upload", key="upload_madden"):
@@ -213,7 +257,6 @@ with add_bulk:
         else:
             db_rows = []
             for r in parsed:
-                year_val = None
                 try:
                     year_val = int(float(r.get("Year", "")))
                 except (ValueError, TypeError):
@@ -236,3 +279,178 @@ with add_bulk:
                 st.success(f"Uploaded {len(db_rows)} seasons.")
                 st.session_state.pop("bulk_madden_parsed", None)
                 st.rerun()
+
+with add_wins:
+    st.markdown("Enter records (W-L or W-L-T) by division. Wins are calculated automatically.")
+
+    with st.form("add_team_wins"):
+        wf1, wf2 = st.columns(2)
+        wins_fran = wf1.text_input(
+            "Franchise", value=selected_franchise, key="wins_fran",
+        )
+        wins_year = wf2.number_input(
+            "Year", min_value=2023, max_value=2060, value=2027, key="wins_year",
+        )
+
+        afc_col, nfc_col = st.columns(2)
+
+        with afc_col:
+            st.subheader("AFC")
+            for div_name in ["AFC East", "AFC North", "AFC South", "AFC West"]:
+                st.markdown(f"**{div_name}**")
+                teams = NFL_DIVISIONS[div_name]
+                c1, c2, c3, c4 = st.columns(4)
+                for col, team in zip([c1, c2, c3, c4], teams):
+                    label = f"{team}"
+                    if team in NFL_COLORS:
+                        label = f"{team} ({NFL_COLORS[team][2]})"
+                    col.text_input(
+                        label, placeholder="W-L", key=f"rec_{team}",
+                    )
+
+        with nfc_col:
+            st.subheader("NFC")
+            for div_name in ["NFC East", "NFC North", "NFC South", "NFC West"]:
+                st.markdown(f"**{div_name}**")
+                teams = NFL_DIVISIONS[div_name]
+                c1, c2, c3, c4 = st.columns(4)
+                for col, team in zip([c1, c2, c3, c4], teams):
+                    label = f"{team}"
+                    if team in NFL_COLORS:
+                        label = f"{team} ({NFL_COLORS[team][2]})"
+                    col.text_input(
+                        label, placeholder="W-L", key=f"rec_{team}",
+                    )
+
+        st.markdown("**Custom / Relocated Teams**")
+        st.caption("One per line: ABBR W-L (e.g. MEL 10-7)")
+        custom_records = st.text_area(
+            "Custom teams", height=80, key="custom_team_records",
+            label_visibility="collapsed",
+        )
+
+        if st.form_submit_button("Submit Records"):
+            db_rows = []
+            errors = []
+            all_div_teams = [
+                t for teams in NFL_DIVISIONS.values() for t in teams
+            ]
+            for team in all_div_teams:
+                record = st.session_state.get(f"rec_{team}", "").strip()
+                if not record:
+                    continue
+                parts = record.split("-")
+                try:
+                    wins = int(parts[0])
+                except (ValueError, IndexError):
+                    errors.append(f"{team}: invalid record '{record}'")
+                    continue
+                db_rows.append({
+                    "franchise": wins_fran,
+                    "year": wins_year,
+                    "team": team,
+                    "wins": wins,
+                })
+
+            if custom_records and custom_records.strip():
+                for line in custom_records.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        errors.append(f"Bad custom line: '{line}'")
+                        continue
+                    team_abbr = parts[0].upper()
+                    record = parts[1]
+                    rec_parts = record.split("-")
+                    try:
+                        wins = int(rec_parts[0])
+                    except (ValueError, IndexError):
+                        errors.append(f"{team_abbr}: invalid record '{record}'")
+                        continue
+                    db_rows.append({
+                        "franchise": wins_fran,
+                        "year": wins_year,
+                        "team": team_abbr,
+                        "wins": wins,
+                    })
+
+            if errors:
+                for e in errors:
+                    st.error(e)
+            if db_rows:
+                insert_rows(wins_table, db_rows)
+                st.success(f"Uploaded {len(db_rows)} team win records.")
+                st.rerun()
+            elif not errors:
+                st.warning("No records entered.")
+
+    with st.expander("Bulk Paste (wide format)"):
+        st.markdown(
+            "First row = header with team abbreviations. "
+            "Subsequent rows = Year + wins per team."
+        )
+        st.code("Year\tARI\tATL\tBAL\t...\n2024\t10\t8\t12\t...")
+        paste_fran = st.text_input(
+            "Franchise for all rows", value=selected_franchise, key="paste_wins_fran",
+        )
+        wins_text = st.text_area("Paste rows here", height=200, key="bulk_wins")
+
+        if st.button("Preview", key="preview_wins"):
+            if wins_text.strip():
+                lines = wins_text.strip().split("\n")
+                if len(lines) >= 2:
+                    headers = lines[0].split("\t")
+                    team_cols = headers[1:]
+                    preview_rows = []
+                    for line in lines[1:]:
+                        vals = line.split("\t")
+                        row = {"Year": vals[0]}
+                        for i, team in enumerate(team_cols):
+                            row[team] = vals[i + 1] if i + 1 < len(vals) else ""
+                        preview_rows.append(row)
+                    if preview_rows:
+                        st.dataframe(
+                            pd.DataFrame(preview_rows), hide_index=True,
+                            use_container_width=True,
+                        )
+                        st.session_state["bulk_wins_parsed"] = {
+                            "teams": team_cols,
+                            "rows": preview_rows,
+                        }
+                else:
+                    st.error("Need a header row + at least one data row.")
+
+        if st.button("Upload", key="upload_wins"):
+            parsed = st.session_state.get("bulk_wins_parsed")
+            if not parsed:
+                st.error("Preview first to validate the data.")
+            else:
+                db_rows = []
+                for r in parsed["rows"]:
+                    try:
+                        year_val = int(float(r["Year"]))
+                    except (ValueError, TypeError):
+                        continue
+                    for team in parsed["teams"]:
+                        wins_val = r.get(team, "").strip()
+                        if not wins_val:
+                            continue
+                        try:
+                            wins_num = float(wins_val)
+                        except (ValueError, TypeError):
+                            continue
+                        db_rows.append({
+                            "franchise": paste_fran,
+                            "year": year_val,
+                            "team": team.strip(),
+                            "wins": wins_num,
+                        })
+                if db_rows:
+                    insert_rows(wins_table, db_rows)
+                    st.success(f"Uploaded {len(db_rows)} team win records.")
+                    st.session_state.pop("bulk_wins_parsed", None)
+                    st.rerun()
+                else:
+                    st.error("No valid data found.")
