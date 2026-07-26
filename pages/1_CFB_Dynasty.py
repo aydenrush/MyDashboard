@@ -20,7 +20,7 @@ data = fetch_all(table, order_col="year")
 df = pd.DataFrame(data)
 
 if df.empty:
-    st.info("No draft pick data loaded yet. Run upload_data.py to populate.")
+    st.info("No draft pick data loaded yet.")
 
 schools = sorted(df["school"].unique()) if not df.empty else []
 selected_school = st.selectbox("School", schools) if schools else None
@@ -33,17 +33,23 @@ if df.empty or not selected_school:
 
 school_df = df[df["school"] == selected_school].sort_values(["year", "round"])
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Picks", len(school_df))
-first_count = len(school_df[school_df["round"] == "1st"])
-col2.metric("1st Rounders", first_count)
+# --- Metrics ---
+round_order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"]
+first_rd = school_df[school_df["round"] == "1st"]
+top_3 = school_df[school_df["round"].isin(["1st", "2nd", "3rd"])]
 years_active = school_df["year"].nunique()
-col3.metric("Draft Classes", years_active)
+
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Total Picks", len(school_df))
+col2.metric("1st Rounders", len(first_rd))
+col3.metric("Top 3 Rounds", len(top_3))
+col4.metric("Draft Classes", years_active)
 if years_active > 0:
-    col4.metric("Avg Picks/Year", f"{len(school_df) / years_active:.1f}")
+    col5.metric("Avg Picks/Year", f"{len(school_df) / years_active:.1f}")
 
 st.divider()
 
+# --- Filters + Table ---
 filter_col1, filter_col2, filter_col3 = st.columns(3)
 with filter_col1:
     positions = sorted(school_df["position"].dropna().unique())
@@ -77,21 +83,137 @@ st.dataframe(
 
 st.divider()
 
-tab_chart1, tab_chart2 = st.tabs(["Draft Picks by Year", "Picks by Round"])
+# --- Analytics Tabs ---
+tab_year, tab_round, tab_pos, tab_class, tab_measurables = st.tabs(
+    ["By Year", "By Round", "By Position", "By Class", "Measurables"]
+)
 
-with tab_chart1:
+with tab_year:
     by_year = school_df.groupby("year").size().reset_index(name="count")
     st.bar_chart(by_year.set_index("year")["count"])
 
-with tab_chart2:
-    round_order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"]
+    st.markdown("**Round Breakdown by Year**")
+    year_round = school_df.groupby(["year", "round"]).size().unstack(fill_value=0)
+    for r in round_order:
+        if r not in year_round.columns:
+            year_round[r] = 0
+    year_round = year_round[
+        [r for r in round_order if r in year_round.columns]
+    ]
+    st.dataframe(year_round, use_container_width=True)
+
+    if not first_rd.empty:
+        st.markdown("**1st Round Picks**")
+        st.dataframe(
+            first_rd[["year", "name", "position"]].rename(
+                columns={"year": "Year", "name": "Name", "position": "Pos"}
+            ).sort_values("Year", ascending=False),
+            use_container_width=True, hide_index=True,
+        )
+
+with tab_round:
     by_round = school_df.groupby("round").size().reset_index(name="count")
     by_round["round"] = pd.Categorical(by_round["round"], categories=round_order, ordered=True)
-    by_round = by_round.sort_values("round")
+    by_round = by_round.sort_values("round").dropna(subset=["round"])
     st.bar_chart(by_round.set_index("round")["count"])
+
+    st.markdown("**Best Draft Round by Position**")
+    if "position" in school_df.columns:
+        round_rank = {r: i for i, r in enumerate(round_order)}
+        pos_df = school_df.dropna(subset=["round", "position"]).copy()
+        pos_df["round_rank"] = pos_df["round"].map(round_rank)
+        best_round_pos = pos_df.groupby("position").agg(
+            picks=("name", "count"),
+            best_round=("round_rank", "min"),
+            avg_round=("round_rank", "mean"),
+        ).reset_index()
+        best_round_pos["best_round"] = best_round_pos["best_round"].map(
+            {i: r for i, r in enumerate(round_order)}
+        )
+        best_round_pos["avg_round"] = best_round_pos["avg_round"].apply(
+            lambda x: round_order[round(x)] if round(x) < len(round_order) else "—"
+        )
+        st.dataframe(
+            best_round_pos.rename(columns={
+                "position": "Position", "picks": "Picks",
+                "best_round": "Highest Pick", "avg_round": "Avg Round",
+            }).sort_values("Picks", ascending=False),
+            use_container_width=True, hide_index=True,
+        )
+
+with tab_pos:
+    st.markdown("**Picks by Position**")
+    by_pos = school_df["position"].value_counts()
+    st.bar_chart(by_pos)
+
+    st.markdown("**Position Breakdown by Round**")
+    pos_round = school_df.groupby(["position", "round"]).size().unstack(fill_value=0)
+    for r in round_order:
+        if r not in pos_round.columns:
+            pos_round[r] = 0
+    pos_round = pos_round[[r for r in round_order if r in pos_round.columns]]
+    pos_round["Total"] = pos_round.sum(axis=1)
+    pos_round = pos_round.sort_values("Total", ascending=False)
+    st.dataframe(pos_round, use_container_width=True)
+
+with tab_class:
+    if "class" in school_df.columns:
+        st.markdown("**Picks by Class**")
+        by_class = school_df["class"].value_counts()
+        st.bar_chart(by_class)
+
+        st.markdown("**Class by Round**")
+        class_round = school_df.groupby(["class", "round"]).size().unstack(fill_value=0)
+        for r in round_order:
+            if r not in class_round.columns:
+                class_round[r] = 0
+        class_round = class_round[[r for r in round_order if r in class_round.columns]]
+        class_round["Total"] = class_round.sum(axis=1)
+        class_round = class_round.sort_values("Total", ascending=False)
+        st.dataframe(class_round, use_container_width=True)
+
+with tab_measurables:
+    school_df["weight_num"] = pd.to_numeric(school_df["weight"], errors="coerce")
+    school_df["age_num"] = pd.to_numeric(school_df["draft_age"], errors="coerce")
+
+    m1, m2, m3 = st.columns(3)
+    avg_wt = school_df["weight_num"].mean()
+    avg_age = school_df["age_num"].mean()
+    if pd.notna(avg_wt):
+        m1.metric("Avg Weight", f"{avg_wt:.0f} lbs")
+    if pd.notna(avg_age):
+        m2.metric("Avg Draft Age", f"{avg_age:.1f}")
+    youngest = school_df.loc[school_df["age_num"].idxmin()] if school_df["age_num"].notna().any() else None
+    if youngest is not None:
+        m3.metric("Youngest Drafted", f"{youngest['name']} ({int(youngest['age_num'])})")
+
+    st.markdown("**Avg Weight by Position**")
+    wt_by_pos = school_df.groupby("position")["weight_num"].mean().dropna().sort_values(ascending=False)
+    if not wt_by_pos.empty:
+        st.bar_chart(wt_by_pos)
+
+    st.markdown("**Draft Age Distribution**")
+    if school_df["age_num"].notna().any():
+        age_dist = school_df["age_num"].dropna().value_counts().sort_index()
+        st.bar_chart(age_dist)
+
+    st.markdown("**Heaviest Picks**")
+    heaviest = school_df.nlargest(5, "weight_num")[["name", "position", "weight", "year"]].rename(
+        columns={"name": "Name", "position": "Pos", "weight": "Weight", "year": "Year"}
+    )
+    if not heaviest.empty:
+        st.dataframe(heaviest, use_container_width=True, hide_index=True)
+
+    st.markdown("**Lightest Picks**")
+    lightest = school_df.nsmallest(5, "weight_num")[["name", "position", "weight", "year"]].rename(
+        columns={"name": "Name", "position": "Pos", "weight": "Weight", "year": "Year"}
+    )
+    if not lightest.empty:
+        st.dataframe(lightest, use_container_width=True, hide_index=True)
 
 st.divider()
 
+# --- Add Data ---
 add_single, add_bulk = st.tabs(["Add Single Pick", "Bulk Add"])
 
 with add_single:
@@ -103,7 +225,7 @@ with add_single:
         fc4, fc5, fc6 = st.columns(3)
         new_pos = fc4.text_input("Position")
         new_class = fc5.text_input("Class (e.g., SR, JR(RS))")
-        new_round = fc6.selectbox("Round", ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"])
+        new_round = fc6.selectbox("Round", round_order)
         fc7, fc8, fc9 = st.columns(3)
         new_age = fc7.number_input("Draft Age", min_value=18, max_value=30, value=22)
         new_height = fc8.text_input("Height (e.g., 6'2\")")

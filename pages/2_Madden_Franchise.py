@@ -65,34 +65,42 @@ fran_wins = (
     else pd.DataFrame()
 )
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Seasons Played", len(fran_seasons))
-sb_wins = fran_seasons["sb_winner"].notna().sum()
-col2.metric("Seasons w/ SB Data", sb_wins)
+sb_winners = fran_seasons["sb_winner"].dropna()
+col2.metric("SB Winners Recorded", len(sb_winners))
+mvp_count = fran_seasons["nfl_mvp"].dropna().nunique()
+col3.metric("Unique MVPs", mvp_count)
 if not fran_wins.empty and primary_team:
+    fran_wins["wins"] = pd.to_numeric(fran_wins["wins"], errors="coerce")
     my_wins = fran_wins[fran_wins["team"] == primary_team]["wins"].sum()
-    col3.metric(f"{primary_team} Total Wins", f"{my_wins:.0f}")
+    col4.metric(f"{primary_team} Total Wins", f"{my_wins:.0f}")
+    my_avg = fran_wins[fran_wins["team"] == primary_team]["wins"].mean()
+    col5.metric(f"{primary_team} Avg Wins", f"{my_avg:.1f}")
 elif not fran_wins.empty:
+    fran_wins["wins"] = pd.to_numeric(fran_wins["wins"], errors="coerce")
     top_team = fran_wins.groupby("team")["wins"].sum().idxmax()
-    col3.metric("Top Win Team", top_team)
+    col4.metric("Top Win Team", top_team)
+    col5.metric("Top Wins", f"{fran_wins.groupby('team')['wins'].sum().max():.0f}")
 
 st.divider()
 
-awards_tab, records_tab, allpro_tab = st.tabs(
-    ["Season Awards", "Team Records", "All-Pro Teams"]
+awards_tab, records_tab, allpro_tab, insights_tab = st.tabs(
+    ["Season Awards", "Team Records", "All-Pro Teams", "Insights"]
 )
 
+display_cols = [
+    "year", "sb_winner", "sb_mvp", "nfl_mvp", "coach_of_year",
+    "opoy", "dpoy", "oroy", "droy", "ninety_nine_club",
+]
+col_names = {
+    "year": "Year", "sb_winner": "SB Winner", "sb_mvp": "SB MVP",
+    "nfl_mvp": "NFL MVP", "coach_of_year": "Coach of Year",
+    "opoy": "OPOY", "dpoy": "DPOY", "oroy": "OROY", "droy": "DROY",
+    "ninety_nine_club": "99 Club",
+}
+
 with awards_tab:
-    display_cols = [
-        "year", "sb_winner", "sb_mvp", "nfl_mvp", "coach_of_year",
-        "opoy", "dpoy", "oroy", "droy", "ninety_nine_club",
-    ]
-    col_names = {
-        "year": "Year", "sb_winner": "SB Winner", "sb_mvp": "SB MVP",
-        "nfl_mvp": "NFL MVP", "coach_of_year": "Coach of Year",
-        "opoy": "OPOY", "dpoy": "DPOY", "oroy": "OROY", "droy": "DROY",
-        "ninety_nine_club": "99 Club",
-    }
     existing = [c for c in display_cols if c in fran_seasons.columns]
     st.dataframe(
         fran_seasons[existing].rename(columns=col_names),
@@ -100,29 +108,49 @@ with awards_tab:
         hide_index=True,
     )
 
-    st.subheader("Award Counts")
-    award_cols = ["sb_winner", "sb_mvp", "nfl_mvp", "opoy", "dpoy"]
-    for acol in award_cols:
+    st.subheader("Award Leaders")
+    award_cols = {
+        "sb_winner": "SB Winner", "sb_mvp": "SB MVP", "nfl_mvp": "NFL MVP",
+        "coach_of_year": "Coach of Year", "opoy": "OPOY", "dpoy": "DPOY",
+        "oroy": "OROY", "droy": "DROY",
+    }
+    leaders = []
+    for acol, label in award_cols.items():
         if acol in fran_seasons.columns:
-            counts = fran_seasons[acol].dropna().value_counts().head(5)
+            counts = fran_seasons[acol].dropna().value_counts()
             if not counts.empty:
-                with st.expander(col_names.get(acol, acol)):
-                    st.dataframe(
-                        counts.reset_index().rename(
-                            columns={
-                                "index": "Winner",
-                                acol: "Winner",
-                                "count": "Times",
-                            }
-                        ),
-                        hide_index=True,
-                    )
+                leaders.append({
+                    "Award": label,
+                    "Leader": counts.index[0],
+                    "Times": int(counts.iloc[0]),
+                    "Total Winners": len(counts),
+                })
+    if leaders:
+        st.dataframe(pd.DataFrame(leaders), use_container_width=True, hide_index=True)
+
+    st.subheader("Award Counts")
+    for acol, label in award_cols.items():
+        if acol in fran_seasons.columns:
+            counts = fran_seasons[acol].dropna().value_counts().head(10)
+            if not counts.empty:
+                with st.expander(label):
+                    st.bar_chart(counts)
 
 with records_tab:
     if fran_wins.empty:
         st.info("No team win records for this franchise.")
     else:
-        fran_wins_clean = fran_wins[fran_wins["wins"].notna()]
+        fran_wins_clean = fran_wins[fran_wins["wins"].notna()].copy()
+
+        rec_m1, rec_m2, rec_m3, rec_m4 = st.columns(4)
+        total_by_team = fran_wins_clean.groupby("team")["wins"].sum().sort_values(ascending=False)
+        avg_by_team = fran_wins_clean.groupby("team")["wins"].mean().sort_values(ascending=False)
+        if not total_by_team.empty:
+            rec_m1.metric("Most Total Wins", f"{total_by_team.index[0]} ({total_by_team.iloc[0]:.0f})")
+            rec_m2.metric("Fewest Total Wins", f"{total_by_team.index[-1]} ({total_by_team.iloc[-1]:.0f})")
+            rec_m3.metric("Highest Avg Wins", f"{avg_by_team.index[0]} ({avg_by_team.iloc[0]:.1f})")
+            best_season = fran_wins_clean.loc[fran_wins_clean["wins"].idxmax()]
+            rec_m4.metric("Best Season", f"{best_season['team']} ({best_season['wins']:.0f}w, Yr {int(best_season['year'])})")
 
         years_list = sorted(fran_wins_clean["year"].unique())
         sel_year = st.selectbox(
@@ -136,13 +164,60 @@ with records_tab:
             st.bar_chart(year_data.set_index("team")["wins"])
 
         st.subheader("All-Time Team Wins")
-        total_wins = (
-            fran_wins_clean.groupby("team")["wins"]
-            .sum()
-            .sort_values(ascending=False)
+        if not total_by_team.empty:
+            st.bar_chart(total_by_team)
+
+        st.subheader("Average Wins per Season")
+        if not avg_by_team.empty:
+            st.bar_chart(avg_by_team)
+
+        if primary_team and primary_team in fran_wins_clean["team"].values:
+            st.subheader(f"{primary_team} Win History")
+            pt_data = fran_wins_clean[fran_wins_clean["team"] == primary_team].sort_values("year")
+            st.line_chart(pt_data.set_index("year")["wins"])
+
+        st.subheader("Division Standings by Year")
+        NFL_DIVISIONS = {
+            "AFC East": ["BUF", "MIA", "NE", "NYJ"],
+            "AFC North": ["BAL", "CIN", "CLE", "PIT"],
+            "AFC South": ["HOU", "IND", "JAX", "TEN"],
+            "AFC West": ["DEN", "KC", "LAC", "LV"],
+            "NFC East": ["DAL", "NYG", "PHI", "WAS"],
+            "NFC North": ["CHI", "DET", "GB", "MIN"],
+            "NFC South": ["ATL", "CAR", "NO", "TB"],
+            "NFC West": ["ARI", "LAR", "SEA", "SF"],
+        }
+        div_year = st.selectbox(
+            "Year", years_list,
+            index=len(years_list) - 1 if years_list else 0,
+            key="div_year",
         )
-        if not total_wins.empty:
-            st.bar_chart(total_wins)
+        div_data = fran_wins_clean[fran_wins_clean["year"] == div_year]
+        if not div_data.empty:
+            d_cols = st.columns(2)
+            for i, (div_name, div_teams) in enumerate(NFL_DIVISIONS.items()):
+                with d_cols[i % 2]:
+                    div_rows = div_data[div_data["team"].isin(div_teams)].sort_values(
+                        "wins", ascending=False
+                    )
+                    if not div_rows.empty:
+                        st.markdown(f"**{div_name}**")
+                        for _, dr in div_rows.iterrows():
+                            name = NFL_COLORS[dr["team"]][2] if dr["team"] in NFL_COLORS else dr["team"]
+                            st.caption(f"{name} ({dr['team']}): {dr['wins']:.0f}W")
+                    else:
+                        remaining = div_data[~div_data["team"].isin(
+                            [t for ts in NFL_DIVISIONS.values() for t in ts]
+                        )]
+
+        custom_teams = div_data[~div_data["team"].isin(
+            [t for ts in NFL_DIVISIONS.values() for t in ts]
+        )]
+        if not custom_teams.empty:
+            st.markdown("**Custom / Relocated**")
+            for _, cr in custom_teams.sort_values("wins", ascending=False).iterrows():
+                name = NFL_COLORS[cr["team"]][2] if cr["team"] in NFL_COLORS else cr["team"]
+                st.caption(f"{name} ({cr['team']}): {cr['wins']:.0f}W")
 
 with allpro_tab:
     try:
@@ -165,6 +240,61 @@ with allpro_tab:
             use_container_width=True,
             hide_index=True,
         )
+
+        st.subheader("Most All-Pro Selections")
+        ap_counts = allpro_df["player"].value_counts().head(15)
+        if not ap_counts.empty:
+            st.bar_chart(ap_counts)
+
+        st.subheader("All-Pro Selections by Position")
+        ap_pos = allpro_df["position_label"].value_counts()
+        if not ap_pos.empty:
+            st.bar_chart(ap_pos)
+
+with insights_tab:
+    st.subheader("Dynasty Streaks")
+
+    if not sb_winners.empty:
+        sb_team_counts = sb_winners.value_counts()
+        st.markdown("**Most Super Bowl Wins**")
+        st.bar_chart(sb_team_counts)
+
+        sorted_seasons = fran_seasons.sort_values("year")
+        max_streak = 0
+        cur_streak = 0
+        streak_team = ""
+        prev_winner = None
+        for _, row in sorted_seasons.iterrows():
+            w = row.get("sb_winner")
+            if pd.notna(w) and w == prev_winner:
+                cur_streak += 1
+                if cur_streak > max_streak:
+                    max_streak = cur_streak
+                    streak_team = w
+            else:
+                cur_streak = 1
+            prev_winner = w
+        if max_streak > 1:
+            st.metric("Longest SB Win Streak", f"{streak_team} ({max_streak} in a row)")
+
+    st.subheader("Award Diversity")
+    unique_awards = {}
+    for acol, label in award_cols.items():
+        if acol in fran_seasons.columns:
+            unique_awards[label] = fran_seasons[acol].dropna().nunique()
+    if unique_awards:
+        diversity_df = pd.DataFrame(
+            list(unique_awards.items()), columns=["Award", "Unique Winners"]
+        ).sort_values("Unique Winners", ascending=False)
+        st.dataframe(diversity_df, use_container_width=True, hide_index=True)
+
+    if not fran_wins.empty:
+        st.subheader("Parity Index")
+        st.caption("Standard deviation of wins per year — lower = more parity")
+        fran_wins_clean2 = fran_wins[fran_wins["wins"].notna()]
+        parity = fran_wins_clean2.groupby("year")["wins"].std().dropna()
+        if not parity.empty:
+            st.line_chart(parity)
 
 st.divider()
 
