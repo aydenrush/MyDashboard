@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, insert_row, insert_rows
+from db import fetch_all, insert_row, insert_rows, delete_row, update_row
 from auth import require_login
 
 st.set_page_config(page_title="Rhymes", layout="wide")
@@ -11,7 +11,7 @@ data = fetch_all("rhymes", order_col="rhyme_group")
 df = pd.DataFrame(data)
 
 if df.empty:
-    st.info("No rhyme data loaded yet. Run upload_data.py to populate.")
+    st.info("No rhyme data loaded yet.")
 
 search = st.text_input("Search for a word")
 
@@ -27,7 +27,36 @@ if not df.empty:
                 highlighted.append(f"**{w}**")
             else:
                 highlighted.append(w)
-        st.markdown(f"**Group {group_id}:** {' / '.join(highlighted)}")
+
+        gcol1, gcol2 = st.columns([8, 2])
+        with gcol1:
+            st.markdown(f"**Group {group_id}:** {' / '.join(highlighted)}")
+        with gcol2:
+            with st.popover("Edit"):
+                for _, row in group_df.iterrows():
+                    ec1, ec2, ec3 = st.columns([4, 2, 1])
+                    new_word = ec1.text_input(
+                        "Word", value=row["word"], key=f"edit_w_{row['id']}",
+                        label_visibility="collapsed",
+                    )
+                    if ec2.button("Save", key=f"save_w_{row['id']}"):
+                        if new_word.strip() and new_word.strip() != row["word"]:
+                            update_row("rhymes", row["id"], {"word": new_word.strip()})
+                            st.rerun()
+                    confirm_key = f"confirm_del_w_{row['id']}"
+                    if st.session_state.get(confirm_key):
+                        st.warning(f"Delete **{row['word']}**?")
+                        yc, nc = st.columns(2)
+                        if yc.button("Yes", key=f"yes_del_w_{row['id']}"):
+                            delete_row("rhymes", row["id"])
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun()
+                        if nc.button("No", key=f"no_del_w_{row['id']}"):
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun()
+                    elif ec3.button("X", key=f"del_w_{row['id']}"):
+                        st.session_state[confirm_key] = True
+                        st.rerun()
 
 st.divider()
 

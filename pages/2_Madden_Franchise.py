@@ -1,69 +1,144 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, insert_row, insert_rows, get_config, upsert_config
-from colors import apply_nfl_theme, NFL_COLORS
+from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, delete_row, update_row, get_config, upsert_config, save_custom_color
+from colors import apply_nfl_theme, get_nfl_colors, clear_color_cache
 from auth import require_login
 
 st.set_page_config(page_title="Madden Franchise", layout="wide")
 require_login()
 
-GAMES = {
-    "Madden 24": "m24",
-    "Madden 25": "m25",
-    "Madden 26": "m26",
-}
+NFL_COLORS = get_nfl_colors()
 
-selected_game = st.radio("Game", list(GAMES.keys()), horizontal=True)
-prefix = GAMES[selected_game]
+games = fetch_games("madden")
+selected_game = st.radio("Game", list(games.keys()), horizontal=True)
+prefix = games[selected_game]
 
 seasons_table = f"{prefix}_seasons"
 wins_table = f"{prefix}_team_wins"
 allpro_table = f"{prefix}_all_pro"
 
-seasons_data = fetch_all(seasons_table, order_col="year")
-wins_data = fetch_all(wins_table, order_col="year")
+try:
+    seasons_data = fetch_all(seasons_table, order_col="year")
+except Exception:
+    seasons_data = []
+try:
+    wins_data = fetch_all(wins_table, order_col="year")
+except Exception:
+    wins_data = []
 seasons_df = pd.DataFrame(seasons_data)
 wins_df = pd.DataFrame(wins_data)
 
-if seasons_df.empty:
-    st.info(f"No data loaded for {selected_game} yet.")
-    st.stop()
+has_data = not seasons_df.empty
 
-franchises = sorted(seasons_df["franchise"].unique())
-selected_franchise = st.selectbox("Franchise", franchises)
+if has_data:
+    franchises = sorted(seasons_df["franchise"].unique())
+    selected_franchise = st.selectbox("Franchise", franchises)
+else:
+    franchises = []
+    selected_franchise = None
+    st.info(f"No data loaded for {selected_game} yet. Add data below.")
 
-config = get_config(prefix, selected_franchise)
-primary_team = config["primary_team"] if config else None
+primary_team = None
+if has_data:
+    config = get_config(prefix, selected_franchise)
+    primary_team = config["primary_team"] if config else None
+    apply_nfl_theme(primary_team)
 
-apply_nfl_theme(primary_team)
-
-team_label = ""
-if primary_team and primary_team in NFL_COLORS:
-    team_label = f" -- {NFL_COLORS[primary_team][2]}"
-st.title(f"{selected_game}: {selected_franchise}{team_label}")
+    team_label = ""
+    if primary_team and primary_team in NFL_COLORS:
+        team_label = f" -- {NFL_COLORS[primary_team][2]}"
+    st.title(f"{selected_game}: {selected_franchise}{team_label}")
+else:
+    st.title(f"{selected_game}")
 
 with st.sidebar:
-    st.subheader("Franchise Settings")
-    all_teams = sorted(NFL_COLORS.keys())
-    team_options = [f"{abbr} - {NFL_COLORS[abbr][2]}" for abbr in all_teams]
-    current_idx = 0
-    if primary_team and primary_team in all_teams:
-        current_idx = all_teams.index(primary_team)
-    sel_team_display = st.selectbox("Primary Team", team_options, index=current_idx)
-    new_primary = sel_team_display.split(" - ")[0]
-    if st.button("Save Primary Team"):
-        upsert_config(prefix, selected_franchise, new_primary)
-        st.success(f"Set to {new_primary}")
-        st.rerun()
+    if has_data:
+        st.subheader("Franchise Settings")
+        all_teams = sorted(NFL_COLORS.keys())
+        team_options = [f"{abbr} - {NFL_COLORS[abbr][2]}" for abbr in all_teams]
+        current_idx = 0
+        if primary_team and primary_team in all_teams:
+            current_idx = all_teams.index(primary_team)
+        sel_team_display = st.selectbox("Primary Team", team_options, index=current_idx)
+        new_primary = sel_team_display.split(" - ")[0]
+        if st.button("Save Primary Team"):
+            upsert_config(prefix, selected_franchise, new_primary)
+            st.success(f"Set to {new_primary}")
+            st.rerun()
 
-fran_seasons = seasons_df[
-    seasons_df["franchise"] == selected_franchise
-].sort_values("year")
-fran_wins = (
-    wins_df[wins_df["franchise"] == selected_franchise].sort_values("year")
-    if not wins_df.empty
-    else pd.DataFrame()
-)
+    st.subheader("Manage Games")
+    with st.expander("Add New Madden Game"):
+        new_game_name = st.text_input("Game Name", placeholder="Madden 27", key="new_mad_name")
+        new_game_prefix = st.text_input(
+            "Table Prefix", placeholder="m27", key="new_mad_prefix",
+            help="Used for database table names",
+        )
+        if st.button("Add Game", key="add_mad_game"):
+            if new_game_name and new_game_prefix:
+                try:
+                    add_game("madden", new_game_name, new_game_prefix)
+                    st.success(f"Added {new_game_name}!")
+                    p = new_game_prefix
+                    st.markdown("**Run this SQL in Supabase SQL Editor:**")
+                    st.code(f"""CREATE TABLE IF NOT EXISTS {p}_seasons (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    franchise TEXT, year INT,
+    sb_winner TEXT, sb_mvp TEXT, nfl_mvp TEXT,
+    coach_of_year TEXT, opoy TEXT, dpoy TEXT,
+    oroy TEXT, droy TEXT, ninety_nine_club TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS {p}_team_wins (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    franchise TEXT, year INT, team TEXT, wins NUMERIC,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS {p}_all_pro (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    year INT, position_label TEXT, player TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE {p}_seasons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {p}_team_wins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {p}_all_pro ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public" ON {p}_seasons FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "public" ON {p}_team_wins FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "public" ON {p}_all_pro FOR ALL USING (true) WITH CHECK (true);""")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+            else:
+                st.warning("Fill in both fields.")
+
+    with st.expander("Set Team Colors"):
+        tc_abbr = st.text_input("Team Abbreviation", placeholder="MEL", key="tc_abbr")
+        tc_name = st.text_input("Team Name", placeholder="Melbourne", key="tc_name")
+        tc_c1, tc_c2 = st.columns(2)
+        tc_primary = tc_c1.color_picker("Primary", "#003594", key="tc_primary")
+        tc_secondary = tc_c2.color_picker("Secondary", "#FFB612", key="tc_secondary")
+        if st.button("Save Colors", key="save_team_colors"):
+            if tc_abbr:
+                save_custom_color("nfl", tc_abbr.strip().upper(), tc_primary, tc_secondary, tc_name.strip() or None)
+                st.success(f"Saved colors for {tc_abbr.upper()}")
+                clear_color_cache()
+                st.rerun()
+            else:
+                st.warning("Enter a team abbreviation.")
+
+if has_data:
+    fran_seasons = seasons_df[
+        seasons_df["franchise"] == selected_franchise
+    ].sort_values("year")
+    fran_wins = (
+        wins_df[wins_df["franchise"] == selected_franchise].sort_values("year")
+        if not wins_df.empty
+        else pd.DataFrame(columns=["id", "year", "franchise", "team", "wins"])
+    )
+else:
+    fran_seasons = pd.DataFrame(columns=[
+        "id", "year", "franchise", "sb_winner", "sb_mvp", "nfl_mvp",
+        "coach_of_year", "opoy", "dpoy", "oroy", "droy", "ninety_nine_club",
+    ])
+    fran_wins = pd.DataFrame(columns=["id", "year", "franchise", "team", "wins"])
 
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Seasons Played", len(fran_seasons))
@@ -102,11 +177,61 @@ col_names = {
 
 with awards_tab:
     existing = [c for c in display_cols if c in fran_seasons.columns]
-    st.dataframe(
-        fran_seasons[existing].rename(columns=col_names),
+    edit_seasons = fran_seasons[existing].copy()
+    edit_seasons.rename(columns=col_names, inplace=True)
+    edit_seasons.insert(0, "id", fran_seasons["id"].values)
+
+    edited = st.data_editor(
+        edit_seasons.set_index("id"),
         use_container_width=True,
-        hide_index=True,
+        num_rows="dynamic",
+        key="edit_seasons",
     )
+
+    if st.button("Save Changes", key="save_seasons"):
+        reverse_names = {v: k for k, v in col_names.items()}
+        for row_id in edited.index:
+            orig = edit_seasons[edit_seasons["id"] == row_id]
+            if orig.empty:
+                continue
+            orig_row = orig.iloc[0]
+            updates = {}
+            for display_col in edited.columns:
+                db_col = reverse_names.get(display_col, display_col)
+                new_val = edited.loc[row_id, display_col]
+                old_val = orig_row.get(display_col)
+                if str(new_val) != str(old_val):
+                    updates[db_col] = new_val if pd.notna(new_val) and str(new_val).strip() else None
+            if updates:
+                update_row(seasons_table, int(row_id), updates)
+        st.success("Saved.")
+        st.rerun()
+
+    export_seasons = fran_seasons[existing].rename(columns=col_names)
+    st.download_button(
+        "Download Seasons CSV", export_seasons.to_csv(index=False),
+        f"{prefix}_{selected_franchise}_seasons.csv", "text/csv", key="dl_seasons",
+    )
+
+    with st.expander("Delete Seasons"):
+        for _, row in fran_seasons.iterrows():
+            dc1, dc2 = st.columns([6, 1])
+            dc1.caption(f"Year {int(row['year'])} — SB: {row.get('sb_winner', '—')}")
+            ck = f"confirm_del_season_{row['id']}"
+            if ck not in st.session_state:
+                if dc2.button("Delete", key=f"del_season_{row['id']}"):
+                    st.session_state[ck] = True
+                    st.rerun()
+            else:
+                dc2.warning("Sure?")
+                yc, nc = dc2.columns(2)
+                if yc.button("Yes", key=f"yes_s_{row['id']}"):
+                    delete_row(seasons_table, row["id"])
+                    st.session_state.pop(ck, None)
+                    st.rerun()
+                if nc.button("No", key=f"no_s_{row['id']}"):
+                    st.session_state.pop(ck, None)
+                    st.rerun()
 
     st.subheader("Award Leaders")
     award_cols = {
@@ -163,6 +288,57 @@ with records_tab:
         if not year_data.empty:
             st.bar_chart(year_data.set_index("team")["wins"])
 
+            with st.expander("Edit / Delete Win Records"):
+                edit_wins = year_data[["id", "team", "wins"]].copy()
+                edit_wins.rename(columns={"team": "Team", "wins": "Wins"}, inplace=True)
+                edited_wins = st.data_editor(
+                    edit_wins.set_index("id"),
+                    use_container_width=True,
+                    key="edit_wins",
+                )
+                if st.button("Save Changes", key="save_wins"):
+                    for row_id in edited_wins.index:
+                        orig = edit_wins[edit_wins["id"] == row_id]
+                        if orig.empty:
+                            continue
+                        orig_row = orig.iloc[0]
+                        updates = {}
+                        if edited_wins.loc[row_id, "Team"] != orig_row["Team"]:
+                            updates["team"] = edited_wins.loc[row_id, "Team"]
+                        if edited_wins.loc[row_id, "Wins"] != orig_row["Wins"]:
+                            updates["wins"] = float(edited_wins.loc[row_id, "Wins"])
+                        if updates:
+                            update_row(wins_table, int(row_id), updates)
+                    st.success("Saved.")
+                    st.rerun()
+
+                for _, row in year_data.iterrows():
+                    dc1, dc2 = st.columns([6, 1])
+                    dc1.caption(f"{row['team']} — {row['wins']:.0f}W")
+                    ck = f"confirm_del_win_{row['id']}"
+                    if ck not in st.session_state:
+                        if dc2.button("Delete", key=f"del_win_{row['id']}"):
+                            st.session_state[ck] = True
+                            st.rerun()
+                    else:
+                        dc2.warning("Sure?")
+                        yc, nc = dc2.columns(2)
+                        if yc.button("Yes", key=f"yes_w_{row['id']}"):
+                            delete_row(wins_table, row["id"])
+                            st.session_state.pop(ck, None)
+                            st.rerun()
+                        if nc.button("No", key=f"no_w_{row['id']}"):
+                            st.session_state.pop(ck, None)
+                            st.rerun()
+
+        st.download_button(
+            "Download Team Wins CSV",
+            fran_wins_clean[["year", "team", "wins"]].rename(
+                columns={"year": "Year", "team": "Team", "wins": "Wins"}
+            ).to_csv(index=False),
+            f"{prefix}_{selected_franchise}_wins.csv", "text/csv", key="dl_wins",
+        )
+
         st.subheader("All-Time Team Wins")
         if not total_by_team.empty:
             st.bar_chart(total_by_team)
@@ -177,16 +353,6 @@ with records_tab:
             st.line_chart(pt_data.set_index("year")["wins"])
 
         st.subheader("Division Standings by Year")
-        NFL_DIVISIONS = {
-            "AFC East": ["BUF", "MIA", "NE", "NYJ"],
-            "AFC North": ["BAL", "CIN", "CLE", "PIT"],
-            "AFC South": ["HOU", "IND", "JAX", "TEN"],
-            "AFC West": ["DEN", "KC", "LAC", "LV"],
-            "NFC East": ["DAL", "NYG", "PHI", "WAS"],
-            "NFC North": ["CHI", "DET", "GB", "MIN"],
-            "NFC South": ["ATL", "CAR", "NO", "TB"],
-            "NFC West": ["ARI", "LAR", "SEA", "SF"],
-        }
         div_year = st.selectbox(
             "Year", years_list,
             index=len(years_list) - 1 if years_list else 0,
@@ -232,14 +398,60 @@ with allpro_tab:
         sel_ap_year = st.selectbox(
             "Year", sorted(allpro_df["year"].unique()), key="ap_year",
         )
-        year_ap = allpro_df[allpro_df["year"] == sel_ap_year]
-        st.dataframe(
-            year_ap[["position_label", "player"]].rename(
-                columns={"position_label": "Position", "player": "Player"}
-            ),
+        year_ap = allpro_df[allpro_df["year"] == sel_ap_year].copy()
+
+        edit_ap = year_ap[["id", "position_label", "player"]].copy()
+        edit_ap.rename(columns={"position_label": "Position", "player": "Player"}, inplace=True)
+
+        edited_ap = st.data_editor(
+            edit_ap.set_index("id"),
             use_container_width=True,
-            hide_index=True,
+            key="edit_allpro",
         )
+
+        if st.button("Save Changes", key="save_allpro"):
+            for row_id in edited_ap.index:
+                orig = edit_ap[edit_ap["id"] == row_id]
+                if orig.empty:
+                    continue
+                orig_row = orig.iloc[0]
+                updates = {}
+                if edited_ap.loc[row_id, "Position"] != orig_row["Position"]:
+                    updates["position_label"] = edited_ap.loc[row_id, "Position"]
+                if edited_ap.loc[row_id, "Player"] != orig_row["Player"]:
+                    updates["player"] = edited_ap.loc[row_id, "Player"]
+                if updates:
+                    update_row(allpro_table, int(row_id), updates)
+            st.success("Saved.")
+            st.rerun()
+
+        st.download_button(
+            "Download All-Pro CSV",
+            allpro_df[["year", "position_label", "player"]].rename(
+                columns={"year": "Year", "position_label": "Position", "player": "Player"}
+            ).to_csv(index=False),
+            f"{prefix}_allpro.csv", "text/csv", key="dl_allpro",
+        )
+
+        with st.expander("Delete All-Pro Selections"):
+            for _, row in year_ap.iterrows():
+                dc1, dc2 = st.columns([6, 1])
+                dc1.caption(f"{row['position_label']} — {row['player']}")
+                ck = f"confirm_del_ap_{row['id']}"
+                if ck not in st.session_state:
+                    if dc2.button("Delete", key=f"del_ap_{row['id']}"):
+                        st.session_state[ck] = True
+                        st.rerun()
+                else:
+                    dc2.warning("Sure?")
+                    yc, nc = dc2.columns(2)
+                    if yc.button("Yes", key=f"yes_ap_{row['id']}"):
+                        delete_row(allpro_table, row["id"])
+                        st.session_state.pop(ck, None)
+                        st.rerun()
+                    if nc.button("No", key=f"no_ap_{row['id']}"):
+                        st.session_state.pop(ck, None)
+                        st.rerun()
 
         st.subheader("Most All-Pro Selections")
         ap_counts = allpro_df["player"].value_counts().head(15)
@@ -309,15 +521,178 @@ NFL_DIVISIONS = {
     "NFC West": ["ARI", "LAR", "SEA", "SF"],
 }
 
-add_single, add_bulk, add_wins = st.tabs(
-    ["Add Single Season", "Bulk Add Seasons", "Add Team Wins"]
+add_eos, add_single, add_bulk, add_wins, add_allpro = st.tabs(
+    ["End of Season", "Add Single Season", "Bulk Add Seasons", "Add Team Wins", "Add All-Pro"]
 )
+
+AP_POSITIONS_OFF = ["QB", "RB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT"]
+AP_POSITIONS_DEF = ["DE", "DT", "OLB", "MLB", "CB", "FS", "SS"]
+AP_POSITIONS_ST = ["K", "P", "KR", "PR"]
+AP_POSITIONS_ALL = AP_POSITIONS_OFF + AP_POSITIONS_DEF + AP_POSITIONS_ST
+
+with add_eos:
+    st.subheader("End of Season Entry")
+    st.caption("Enter all season data at once: awards, team records, and All-Pro selections.")
+
+    with st.form("end_of_season"):
+        eos_fc1, eos_fc2, eos_fc3 = st.columns(3)
+        if franchises:
+            eos_fran_sel = eos_fc1.selectbox("Franchise", franchises, key="eos_fran")
+        else:
+            eos_fran_sel = ""
+        eos_fran_new = eos_fc2.text_input("Or new franchise", key="eos_fran_new")
+        eos_year = eos_fc3.number_input(
+            "Year", min_value=2023, max_value=2060, value=2027, key="eos_year",
+        )
+
+        st.markdown("---")
+        st.markdown("### Season Awards")
+        eos_c1, eos_c2, eos_c3 = st.columns(3)
+        eos_sb = eos_c1.text_input("SB Winner", key="eos_sb")
+        eos_sbmvp = eos_c2.text_input("SB MVP", key="eos_sbmvp")
+        eos_mvp = eos_c3.text_input("NFL MVP", key="eos_mvp")
+        eos_c4, eos_c5, eos_c6 = st.columns(3)
+        eos_coy = eos_c4.text_input("Coach of Year", key="eos_coy")
+        eos_opoy = eos_c5.text_input("OPOY", key="eos_opoy")
+        eos_dpoy = eos_c6.text_input("DPOY", key="eos_dpoy")
+        eos_c7, eos_c8, eos_c9 = st.columns(3)
+        eos_oroy = eos_c7.text_input("OROY", key="eos_oroy")
+        eos_droy = eos_c8.text_input("DROY", key="eos_droy")
+        eos_99 = eos_c9.text_input("99 Club", key="eos_99")
+
+        st.markdown("---")
+        st.markdown("### Team Records (W-L)")
+        eos_afc, eos_nfc = st.columns(2)
+        with eos_afc:
+            st.markdown("**AFC**")
+            for div_name in ["AFC East", "AFC North", "AFC South", "AFC West"]:
+                st.caption(div_name)
+                teams = NFL_DIVISIONS[div_name]
+                tc1, tc2, tc3, tc4 = st.columns(4)
+                for col, team in zip([tc1, tc2, tc3, tc4], teams):
+                    label = team
+                    if team in NFL_COLORS:
+                        label = f"{team} ({NFL_COLORS[team][2]})"
+                    col.text_input(label, placeholder="W-L", key=f"eos_rec_{team}")
+        with eos_nfc:
+            st.markdown("**NFC**")
+            for div_name in ["NFC East", "NFC North", "NFC South", "NFC West"]:
+                st.caption(div_name)
+                teams = NFL_DIVISIONS[div_name]
+                tc1, tc2, tc3, tc4 = st.columns(4)
+                for col, team in zip([tc1, tc2, tc3, tc4], teams):
+                    label = team
+                    if team in NFL_COLORS:
+                        label = f"{team} ({NFL_COLORS[team][2]})"
+                    col.text_input(label, placeholder="W-L", key=f"eos_rec_{team}")
+
+        st.caption("Custom / Relocated (one per line: ABBR W-L)")
+        eos_custom = st.text_area("Custom teams", height=60, key="eos_custom", label_visibility="collapsed")
+
+        st.markdown("---")
+        st.markdown("### All-Pro Team")
+        eos_apo, eos_apd, eos_aps = st.columns(3)
+        with eos_apo:
+            st.markdown("**Offense**")
+            for pos in AP_POSITIONS_OFF:
+                st.text_input(pos, placeholder="Player name", key=f"eos_ap_{pos}")
+        with eos_apd:
+            st.markdown("**Defense**")
+            for pos in AP_POSITIONS_DEF:
+                st.text_input(pos, placeholder="Player name", key=f"eos_ap_{pos}")
+        with eos_aps:
+            st.markdown("**Special Teams**")
+            for pos in AP_POSITIONS_ST:
+                st.text_input(pos, placeholder="Player name", key=f"eos_ap_{pos}")
+
+        if st.form_submit_button("Submit Full Season"):
+            eos_fran = eos_fran_new.strip() if eos_fran_new.strip() else eos_fran_sel
+            if not eos_fran:
+                st.error("Franchise name is required.")
+                st.stop()
+            errors = []
+            # Awards
+            insert_row(seasons_table, {
+                "franchise": eos_fran, "year": eos_year,
+                "sb_winner": eos_sb or None, "sb_mvp": eos_sbmvp or None,
+                "nfl_mvp": eos_mvp or None, "coach_of_year": eos_coy or None,
+                "opoy": eos_opoy or None, "dpoy": eos_dpoy or None,
+                "oroy": eos_oroy or None, "droy": eos_droy or None,
+                "ninety_nine_club": eos_99 or None,
+            })
+
+            # Team wins
+            wins_rows = []
+            all_div_teams = [t for ts in NFL_DIVISIONS.values() for t in ts]
+            for team in all_div_teams:
+                record = st.session_state.get(f"eos_rec_{team}", "").strip()
+                if not record:
+                    continue
+                parts = record.split("-")
+                try:
+                    wins = int(parts[0])
+                except (ValueError, IndexError):
+                    errors.append(f"{team}: invalid record '{record}'")
+                    continue
+                wins_rows.append({
+                    "franchise": eos_fran, "year": eos_year,
+                    "team": team, "wins": wins,
+                })
+            if eos_custom and eos_custom.strip():
+                for line in eos_custom.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        errors.append(f"Bad custom line: '{line}'")
+                        continue
+                    team_abbr = parts[0].upper()
+                    rec_parts = parts[1].split("-")
+                    try:
+                        wins = int(rec_parts[0])
+                    except (ValueError, IndexError):
+                        errors.append(f"{team_abbr}: invalid record '{parts[1]}'")
+                        continue
+                    wins_rows.append({
+                        "franchise": eos_fran, "year": eos_year,
+                        "team": team_abbr, "wins": wins,
+                    })
+            if wins_rows:
+                insert_rows(wins_table, wins_rows)
+
+            # All-Pro
+            ap_rows = []
+            for pos in AP_POSITIONS_ALL:
+                player = st.session_state.get(f"eos_ap_{pos}", "").strip()
+                if player:
+                    ap_rows.append({
+                        "year": eos_year, "position_label": pos, "player": player,
+                    })
+            if ap_rows:
+                insert_rows(allpro_table, ap_rows)
+
+            for e in errors:
+                st.error(e)
+
+            counts = []
+            counts.append("1 season award record")
+            if wins_rows:
+                counts.append(f"{len(wins_rows)} team records")
+            if ap_rows:
+                counts.append(f"{len(ap_rows)} All-Pro selections")
+            st.success(f"Uploaded: {', '.join(counts)}.")
+            st.rerun()
 
 with add_single:
     with st.form("add_season"):
-        fc1, fc2 = st.columns(2)
-        new_fran = fc1.selectbox("Franchise", franchises, key="new_fran")
-        new_year = fc2.number_input(
+        fc1, fc2, fc3 = st.columns(3)
+        if franchises:
+            new_fran_sel = fc1.selectbox("Franchise", franchises, key="new_fran")
+        else:
+            new_fran_sel = ""
+        new_fran_override = fc2.text_input("Or new franchise", key="new_fran_override")
+        new_year = fc3.number_input(
             "Year", min_value=2023, max_value=2060, value=2027,
         )
         fc3, fc4, fc5 = st.columns(3)
@@ -334,6 +709,10 @@ with add_single:
         new_99 = fc11.text_input("99 Club")
 
         if st.form_submit_button("Add Season"):
+            new_fran = new_fran_override.strip() if new_fran_override.strip() else new_fran_sel
+            if not new_fran:
+                st.error("Franchise name is required.")
+                st.stop()
             insert_row(seasons_table, {
                 "franchise": new_fran, "year": new_year,
                 "sb_winner": new_sb or None, "sb_mvp": new_mvp or None,
@@ -353,7 +732,7 @@ with add_bulk:
         "\tOPOY\tDPOY\tOROY\tDROY\t99 Club"
     )
     bulk_fran = st.text_input(
-        "Franchise for all rows", value=selected_franchise, key="bulk_fran",
+        "Franchise for all rows", value=selected_franchise or "", key="bulk_fran",
     )
     bulk_text = st.text_area("Paste rows here", height=200, key="bulk_madden")
 
@@ -418,7 +797,7 @@ with add_wins:
     with st.form("add_team_wins"):
         wf1, wf2 = st.columns(2)
         wins_fran = wf1.text_input(
-            "Franchise", value=selected_franchise, key="wins_fran",
+            "Franchise", value=selected_franchise or "", key="wins_fran",
         )
         wins_year = wf2.number_input(
             "Year", min_value=2023, max_value=2060, value=2027, key="wins_year",
@@ -525,7 +904,7 @@ with add_wins:
         )
         st.code("Year\tARI\tATL\tBAL\t...\n2024\t10\t8\t12\t...")
         paste_fran = st.text_input(
-            "Franchise for all rows", value=selected_franchise, key="paste_wins_fran",
+            "Franchise for all rows", value=selected_franchise or "", key="paste_wins_fran",
         )
         wins_text = st.text_area("Paste rows here", height=200, key="bulk_wins")
 
@@ -586,3 +965,86 @@ with add_wins:
                     st.rerun()
                 else:
                     st.error("No valid data found.")
+
+with add_allpro:
+    st.markdown("Add All-Pro selections for a single year.")
+
+    with st.form("add_allpro_form"):
+        ap_fc1, ap_fc2 = st.columns(2)
+        ap_year = ap_fc1.number_input(
+            "Year", min_value=2023, max_value=2060, value=2027, key="ap_add_year",
+        )
+        ap_fc2.markdown("")
+
+        st.markdown("**Enter player names by position (leave blank to skip)**")
+
+        ap_off, ap_def, ap_st = st.columns(3)
+        with ap_off:
+            st.markdown("**Offense**")
+            for pos in AP_POSITIONS_OFF:
+                st.text_input(pos, placeholder="Player name", key=f"ap_{pos}")
+
+        with ap_def:
+            st.markdown("**Defense**")
+            for pos in AP_POSITIONS_DEF:
+                st.text_input(pos, placeholder="Player name", key=f"ap_{pos}")
+
+        with ap_st:
+            st.markdown("**Special Teams**")
+            for pos in AP_POSITIONS_ST:
+                st.text_input(pos, placeholder="Player name", key=f"ap_{pos}")
+
+        if st.form_submit_button("Submit All-Pro Team"):
+            db_rows = []
+            for pos in AP_POSITIONS_ALL:
+                player = st.session_state.get(f"ap_{pos}", "").strip()
+                if player:
+                    db_rows.append({
+                        "year": ap_year,
+                        "position_label": pos,
+                        "player": player,
+                    })
+            if db_rows:
+                insert_rows(allpro_table, db_rows)
+                st.success(f"Added {len(db_rows)} All-Pro selections.")
+                st.rerun()
+            else:
+                st.warning("No players entered.")
+
+    with st.expander("Bulk Paste All-Pro"):
+        st.markdown("Paste tab-separated rows: `Position` and `Player` for a single year.")
+        st.code("QB\tPatrick Mahomes\nRB\tDerrick Henry\nWR\tJa'Marr Chase")
+        ap_paste_year = st.number_input(
+            "Year", min_value=2023, max_value=2060, value=2027, key="ap_paste_year",
+        )
+        ap_text = st.text_area("Paste rows here", height=200, key="bulk_allpro")
+
+        if st.button("Preview", key="preview_allpro"):
+            if ap_text.strip():
+                rows = []
+                for line in ap_text.strip().split("\n"):
+                    parts = line.split("\t", 1)
+                    if len(parts) == 2:
+                        rows.append({"Position": parts[0].strip(), "Player": parts[1].strip()})
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                    st.session_state["bulk_allpro_parsed"] = rows
+
+        if st.button("Upload", key="upload_allpro"):
+            parsed = st.session_state.get("bulk_allpro_parsed", [])
+            if not parsed:
+                st.error("Preview first to validate the data.")
+            else:
+                db_rows = [
+                    {
+                        "year": ap_paste_year,
+                        "position_label": r["Position"],
+                        "player": r["Player"],
+                    }
+                    for r in parsed if r["Player"].strip()
+                ]
+                if db_rows:
+                    insert_rows(allpro_table, db_rows)
+                    st.success(f"Uploaded {len(db_rows)} All-Pro selections.")
+                    st.session_state.pop("bulk_allpro_parsed", None)
+                    st.rerun()

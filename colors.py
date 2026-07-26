@@ -1,4 +1,5 @@
 import streamlit as st
+from db import fetch_custom_colors
 
 NFL_COLORS = {
     "ARI": ("#97233F", "#000000", "Cardinals"),
@@ -104,13 +105,44 @@ def apply_theme(primary, secondary):
     """, unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=120)
+def _load_custom():
+    return fetch_custom_colors()
+
+
+def clear_color_cache():
+    _load_custom.clear()
+
+
+def get_nfl_colors():
+    merged = dict(NFL_COLORS)
+    for row in _load_custom():
+        if row["color_type"] == "nfl":
+            merged[row["key"]] = (
+                row["primary_color"],
+                row["secondary_color"],
+                row.get("display_name") or row["key"],
+            )
+    return merged
+
+
+def get_college_colors():
+    merged = dict(COLLEGE_COLORS)
+    for row in _load_custom():
+        if row["color_type"] == "college":
+            merged[row["key"]] = (row["primary_color"], row["secondary_color"])
+    return merged
+
+
 def apply_nfl_theme(team_abbr):
-    if team_abbr and team_abbr in NFL_COLORS:
-        primary, secondary, _ = NFL_COLORS[team_abbr]
+    colors = get_nfl_colors()
+    if team_abbr and team_abbr in colors:
+        primary, secondary, _ = colors[team_abbr]
         apply_theme(primary, secondary)
 
 
 def apply_college_theme(school):
-    if school and school in COLLEGE_COLORS:
-        primary, secondary = COLLEGE_COLORS[school]
+    colors = get_college_colors()
+    if school and school in colors:
+        primary, secondary = colors[school]
         apply_theme(primary, secondary)

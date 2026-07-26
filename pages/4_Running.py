@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-from db import fetch_all, get_supabase
+from db import fetch_all, insert_rows, get_supabase
 from auth import require_login
 
 st.set_page_config(page_title="Running Schedule", layout="wide")
@@ -57,6 +57,15 @@ TYPE_LABELS = {
 
 df["type"] = df["workout"].apply(workout_type)
 
+# --- Auto-complete past rest days ---
+past_rest = df[(df["date"] <= today) & (df["type"] == "rest") & (~df["completed"])]
+if not past_rest.empty:
+    sb = get_supabase()
+    for _, r in past_rest.iterrows():
+        sb.table("running_schedule").update({"completed": True}).eq("id", r["id"]).execute()
+    df.loc[past_rest.index, "completed"] = True
+
+# --- Today's Workout ---
 today_row = df[df["date"] == today]
 if not today_row.empty:
     row = today_row.iloc[0]
@@ -103,7 +112,6 @@ else:
                 r = day_row.iloc[0]
                 color = TYPE_COLORS[r["type"]]
                 title = r["workout"].split("\n")[0]
-                check = " ~~" + title + "~~" if r["completed"] else title
                 if day == today:
                     st.markdown(
                         f'<span style="color:{color}; font-weight:bold;">'
@@ -173,8 +181,18 @@ with view_tab:
             elif done:
                 st.caption("Done")
 
-with view_tab:
+    # --- CSV Export ---
     st.divider()
+    export_df = df[["date", "workout", "type", "completed"]].copy()
+    export_df.columns = ["Date", "Workout", "Type", "Completed"]
+    st.download_button(
+        "Download Schedule CSV",
+        export_df.to_csv(index=False),
+        "running_schedule.csv",
+        "text/csv",
+    )
+
+    # --- Add to Schedule ---
     with st.expander("Add to Schedule"):
         st.markdown("Paste tab-separated rows: `Date` and `Workout`")
         st.code("2026-08-17\tEasy Run - 30 min\n2026-08-18\tRest Day")
@@ -212,7 +230,6 @@ with view_tab:
                 if rows:
                     if replace_existing:
                         get_supabase().table("running_schedule").delete().neq("id", 0).execute()
-                    from db import insert_rows
                     insert_rows("running_schedule", rows)
                     st.success(f"Uploaded {len(rows)} days.")
                     st.rerun()

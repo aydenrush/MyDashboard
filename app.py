@@ -1,14 +1,17 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-from db import fetch_all, get_supabase
+from db import fetch_all, fetch_games, get_supabase
 from auth import require_login
-from colors import NFL_COLORS
+from colors import get_nfl_colors
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 require_login()
 
 st.title("Dashboard")
+st.link_button("Ayden Music", "https://aydenmusic.streamlit.app")
+
+NFL_COLORS = get_nfl_colors()
 
 today = date.today()
 
@@ -97,13 +100,13 @@ with progress_col:
 st.divider()
 
 # --- Load all data ---
-cfb_games = {"CFB 25": "cfb25_draft_picks", "CFB 26": "cfb26_draft_picks", "CFB 27": "cfb27_draft_picks"}
-madden_games = {"Madden 24": "m24", "Madden 25": "m25", "Madden 26": "m26"}
+cfb_games = fetch_games("cfb")
+madden_games = fetch_games("madden")
 
 all_picks = []
-for game, table in cfb_games.items():
+for game, pfx in cfb_games.items():
     try:
-        data = fetch_all(table)
+        data = fetch_all(f"{pfx}_draft_picks")
         for r in data:
             r["game"] = game
         all_picks.extend(data)
@@ -166,6 +169,34 @@ if not picks_df.empty:
         st.markdown("**Picks by Position (Top 10)**")
         by_pos = picks_df["position"].value_counts().head(10)
         st.bar_chart(by_pos)
+
+    with st.expander("Cross-Game Comparison"):
+        game_comp = picks_df.groupby("game").agg(
+            total=("name", "count"),
+            first_round=("round", lambda x: (x == "1st").sum()),
+            positions=("position", "nunique"),
+            classes=("year", "nunique"),
+        ).reset_index().rename(columns={
+            "game": "Game", "total": "Total Picks", "first_round": "1st Rounders",
+            "positions": "Positions", "classes": "Draft Classes",
+        })
+        st.dataframe(game_comp, use_container_width=True, hide_index=True)
+
+        st.markdown("**Picks per Game by Round**")
+        game_round = picks_df.groupby(["game", "round"]).size().unstack(fill_value=0)
+        for r in round_order:
+            if r not in game_round.columns:
+                game_round[r] = 0
+        game_round = game_round[[r for r in round_order if r in game_round.columns]]
+        st.dataframe(game_round, use_container_width=True)
+
+        st.markdown("**Top Positions Across All Games**")
+        all_pos = picks_df.groupby(["game", "position"]).size().unstack(fill_value=0)
+        top_pos_cols = picks_df["position"].value_counts().head(8).index.tolist()
+        st.dataframe(
+            all_pos[[c for c in top_pos_cols if c in all_pos.columns]],
+            use_container_width=True,
+        )
 else:
     st.info("No CFB draft data loaded.")
 
@@ -260,6 +291,55 @@ if not seasons_df.empty:
             st.dataframe(mvp_data, use_container_width=True, hide_index=True)
         else:
             st.caption("No MVP data.")
+
+    with st.expander("Cross-Game Comparison"):
+        game_stats = seasons_df.groupby("game").agg(
+            seasons=("year", "count"),
+            franchises=("franchise", "nunique"),
+            sb_winners=("sb_winner", lambda x: x.notna().sum()),
+            unique_mvps=("nfl_mvp", "nunique"),
+        ).reset_index().rename(columns={
+            "game": "Game", "seasons": "Seasons", "franchises": "Franchises",
+            "sb_winners": "SB Winners Recorded", "unique_mvps": "Unique MVPs",
+        })
+        st.dataframe(game_stats, use_container_width=True, hide_index=True)
+
+        st.markdown("**Award Leaders Across All Games**")
+        award_cols = ["sb_winner", "sb_mvp", "nfl_mvp", "opoy", "dpoy"]
+        award_labels = ["SB Winner", "SB MVP", "NFL MVP", "OPOY", "DPOY"]
+        cross_leaders = []
+        for col, label in zip(award_cols, award_labels):
+            if col in seasons_df.columns:
+                counts = seasons_df[col].dropna().value_counts()
+                if not counts.empty:
+                    cross_leaders.append({
+                        "Award": label,
+                        "All-Time Leader": counts.index[0],
+                        "Total": counts.iloc[0],
+                        "Games Won In": seasons_df[seasons_df[col] == counts.index[0]]["game"].nunique(),
+                    })
+        if cross_leaders:
+            st.dataframe(pd.DataFrame(cross_leaders), use_container_width=True, hide_index=True)
+
+        if not wins_df.empty:
+            st.markdown("**Top Teams by Total Wins Across All Games**")
+            cross_wins = wins_df.groupby("team").agg(
+                total_wins=("wins", "sum"),
+                games_in=("game", "nunique"),
+                seasons=("year", "nunique"),
+            ).sort_values("total_wins", ascending=False).head(15).reset_index()
+            cross_wins.columns = ["Team", "Total Wins", "Games", "Seasons"]
+            st.dataframe(cross_wins, use_container_width=True, hide_index=True)
+
+            st.markdown("**Average Wins Per Season by Team (min 3 seasons)**")
+            team_avg = wins_df.groupby("team").agg(
+                total_wins=("wins", "sum"), seasons=("year", "count"),
+            )
+            team_avg = team_avg[team_avg["seasons"] >= 3]
+            team_avg["avg_wins"] = (team_avg["total_wins"] / team_avg["seasons"]).round(1)
+            team_avg = team_avg.sort_values("avg_wins", ascending=False).head(10).reset_index()
+            team_avg.columns = ["Team", "Total Wins", "Seasons", "Avg Wins"]
+            st.dataframe(team_avg, use_container_width=True, hide_index=True)
 else:
     st.info("No Madden data loaded.")
 
