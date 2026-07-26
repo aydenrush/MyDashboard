@@ -173,6 +173,50 @@ with view_tab:
             elif done:
                 st.caption("Done")
 
+with view_tab:
+    st.divider()
+    with st.expander("Add to Schedule"):
+        st.markdown("Paste tab-separated rows: `Date` and `Workout`")
+        st.code("2026-08-17\tEasy Run - 30 min\n2026-08-18\tRest Day")
+        paste_text = st.text_area("Paste rows here", height=150, key="paste_schedule")
+        replace_existing = st.checkbox(
+            "Replace existing schedule (deletes all current data)", value=False,
+        )
+        if st.button("Upload", key="upload_schedule"):
+            if not paste_text.strip():
+                st.error("Nothing to upload.")
+            else:
+                rows = []
+                errors = []
+                for line in paste_text.strip().split("\n"):
+                    parts = line.split("\t", 1)
+                    if len(parts) < 2:
+                        parts = line.split(None, 1)
+                    if len(parts) < 2:
+                        errors.append(f"Bad line: {line}")
+                        continue
+                    date_str = parts[0].strip()
+                    workout = parts[1].strip().replace("•", "\n-")
+                    try:
+                        pd.to_datetime(date_str)
+                    except Exception:
+                        errors.append(f"Bad date: {date_str}")
+                        continue
+                    rows.append({
+                        "date": date_str,
+                        "workout": workout or "Rest Day",
+                        "completed": False,
+                    })
+                for e in errors:
+                    st.error(e)
+                if rows:
+                    if replace_existing:
+                        get_supabase().table("running_schedule").delete().neq("id", 0).execute()
+                    from db import insert_rows
+                    insert_rows("running_schedule", rows)
+                    st.success(f"Uploaded {len(rows)} days.")
+                    st.rerun()
+
 with progress_tab:
     total_workouts = len(df[df["type"] != "rest"])
     completed_workouts = len(df[(df["type"] != "rest") & (df["completed"])])
