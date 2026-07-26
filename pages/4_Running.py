@@ -1,0 +1,210 @@
+import streamlit as st
+import pandas as pd
+from datetime import date, timedelta
+from db import fetch_all, get_supabase
+from auth import require_login
+
+st.set_page_config(page_title="Running Schedule", layout="wide")
+require_login()
+
+st.title("Running Schedule")
+
+data = fetch_all("running_schedule", order_col="date")
+df = pd.DataFrame(data)
+
+if df.empty:
+    st.info("No schedule loaded yet. Run the running_schedule.sql in Supabase.")
+    st.stop()
+
+df["date"] = pd.to_datetime(df["date"]).dt.date
+today = date.today()
+
+
+def workout_type(text):
+    t = text.split("\n")[0].strip()
+    if t == "Rest Day":
+        return "rest"
+    if "Rest" in t or "Cross" in t:
+        return "rest"
+    if "Tempo" in t or "tempo" in t:
+        return "tempo"
+    if "Hill" in t or "hill" in t:
+        return "hills"
+    if "Fartlek" in t or "Speed" in t or "Repeat" in t or "Interval" in t:
+        return "speed"
+    if "Long" in t or "Aerobic" in t:
+        return "long"
+    return "easy"
+
+
+TYPE_COLORS = {
+    "rest": "#888888",
+    "easy": "#4CAF50",
+    "tempo": "#FF9800",
+    "hills": "#9C27B0",
+    "speed": "#F44336",
+    "long": "#2196F3",
+}
+
+TYPE_LABELS = {
+    "rest": "Rest",
+    "easy": "Easy",
+    "tempo": "Tempo",
+    "hills": "Hills",
+    "speed": "Speed",
+    "long": "Long Run",
+}
+
+df["type"] = df["workout"].apply(workout_type)
+
+today_row = df[df["date"] == today]
+if not today_row.empty:
+    row = today_row.iloc[0]
+    wtype = row["type"]
+    color = TYPE_COLORS[wtype]
+    st.markdown(
+        f'<div style="border-left: 5px solid {color}; padding: 12px 16px; '
+        f'border-radius: 4px; margin-bottom: 16px;">'
+        f'<span style="color: {color}; font-weight: bold; font-size: 0.85em;">'
+        f'{TYPE_LABELS[wtype].upper()}</span>'
+        f'<h3 style="margin: 4px 0;">Today\'s Workout</h3>'
+        f'<p style="white-space: pre-line; margin: 0;">{row["workout"]}</p></div>',
+        unsafe_allow_html=True,
+    )
+    if not row["completed"]:
+        if st.button("Mark Complete"):
+            get_supabase().table("running_schedule").update(
+                {"completed": True}
+            ).eq("id", row["id"]).execute()
+            st.rerun()
+    else:
+        st.success("Completed!")
+else:
+    st.info("No workout scheduled for today.")
+
+st.divider()
+
+week_start = today - timedelta(days=today.weekday())
+week_end = week_start + timedelta(days=6)
+week_df = df[(df["date"] >= week_start) & (df["date"] <= week_end)]
+
+st.subheader("This Week")
+if week_df.empty:
+    st.info("No workouts scheduled this week.")
+else:
+    cols = st.columns(7)
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    for i, col in enumerate(cols):
+        day = week_start + timedelta(days=i)
+        day_row = week_df[week_df["date"] == day]
+        with col:
+            st.caption(f"**{day_names[i]}** {day.strftime('%m/%d')}")
+            if not day_row.empty:
+                r = day_row.iloc[0]
+                color = TYPE_COLORS[r["type"]]
+                title = r["workout"].split("\n")[0]
+                check = " ~~" + title + "~~" if r["completed"] else title
+                if day == today:
+                    st.markdown(
+                        f'<span style="color:{color}; font-weight:bold;">'
+                        f'{"~~" + title + "~~" if r["completed"] else title}'
+                        f'</span>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f'<span style="color:{color};">{title}</span>',
+                        unsafe_allow_html=True,
+                    )
+                if r["completed"]:
+                    st.caption("Done")
+            else:
+                st.caption("--")
+
+st.divider()
+
+view_tab, progress_tab = st.tabs(["Full Schedule", "Progress"])
+
+with view_tab:
+    show_completed = st.checkbox("Show completed only", value=False)
+    show_rest = st.checkbox("Show rest days", value=True)
+
+    display_df = df.copy()
+    if show_completed:
+        display_df = display_df[display_df["completed"]]
+    if not show_rest:
+        display_df = display_df[display_df["type"] != "rest"]
+
+    for _, row in display_df.iterrows():
+        color = TYPE_COLORS[row["type"]]
+        is_past = row["date"] < today
+        is_today = row["date"] == today
+        opacity = "0.5" if is_past and not is_today else "1.0"
+
+        date_str = row["date"].strftime("%a %m/%d")
+        title = row["workout"].split("\n")[0]
+        details = "\n".join(row["workout"].split("\n")[1:]).strip()
+        done = row["completed"]
+
+        col_date, col_workout, col_action = st.columns([1.5, 6, 1.5])
+        with col_date:
+            label = f"**{date_str}**" if is_today else date_str
+            st.markdown(
+                f'<span style="opacity:{opacity};">{label}</span>',
+                unsafe_allow_html=True,
+            )
+        with col_workout:
+            badge = f'<span style="color:{color}; font-weight:bold; font-size:0.8em;">{TYPE_LABELS[row["type"]].upper()}</span> '
+            text = f"~~{title}~~" if done else title
+            st.markdown(
+                f'<span style="opacity:{opacity};">{badge}{text}</span>',
+                unsafe_allow_html=True,
+            )
+            if details and not done:
+                with st.expander("Details"):
+                    st.markdown(details)
+        with col_action:
+            if not done and row["type"] != "rest":
+                if st.button("Done", key=f"done_{row['id']}"):
+                    get_supabase().table("running_schedule").update(
+                        {"completed": True}
+                    ).eq("id", row["id"]).execute()
+                    st.rerun()
+            elif done:
+                st.caption("Done")
+
+with progress_tab:
+    total_workouts = len(df[df["type"] != "rest"])
+    completed_workouts = len(df[(df["type"] != "rest") & (df["completed"])])
+    remaining = total_workouts - completed_workouts
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Workouts", total_workouts)
+    col2.metric("Completed", completed_workouts)
+    col3.metric("Remaining", remaining)
+    if total_workouts > 0:
+        col4.metric("Progress", f"{completed_workouts / total_workouts * 100:.0f}%")
+
+    st.progress(completed_workouts / total_workouts if total_workouts > 0 else 0)
+
+    st.subheader("By Workout Type")
+    type_summary = (
+        df[df["type"] != "rest"]
+        .groupby("type")
+        .agg(total=("id", "count"), done=("completed", "sum"))
+        .reset_index()
+    )
+    type_summary["type_label"] = type_summary["type"].map(TYPE_LABELS)
+    type_summary["remaining"] = type_summary["total"] - type_summary["done"]
+    st.dataframe(
+        type_summary[["type_label", "total", "done", "remaining"]].rename(
+            columns={
+                "type_label": "Type",
+                "total": "Total",
+                "done": "Done",
+                "remaining": "Remaining",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
