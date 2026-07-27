@@ -23,6 +23,14 @@ ACTIVITY_TYPES = {
 
 TIME_SLOTS = ["Morning", "Midday", "Afternoon", "Evening"]
 
+SCHOOL_SCHEDULE = [
+    {"name": "CS 25000 Lab", "days": [3], "time": "9:30 - 11:20 AM", "range_start": "2026-08-27", "range_end": "2026-12-10", "room": "SL 251"},
+    {"name": "CS 25100 Pso", "days": [2], "time": "11:30 AM - 12:20 PM", "range_start": "2026-08-26", "range_end": "2026-12-09", "room": "SL 247"},
+    {"name": "CS 25000", "days": [1, 3], "time": "1:30 - 2:45 PM", "range_start": "2026-08-25", "range_end": "2026-12-10", "room": "ES 2107"},
+    {"name": "CS 25100", "days": [0, 2, 4], "time": "2:30 - 3:20 PM", "range_start": "2026-08-24", "range_end": "2026-12-11", "room": "ES 2107"},
+    {"name": "MA 26500", "days": [0, 2, 4], "time": "4:30 - 5:20 PM", "range_start": "2026-08-24", "range_end": "2026-12-11", "room": "SL 011"},
+]
+
 
 @st.cache_data(ttl=300)
 def fetch_calendar(url, start_str, end_str):
@@ -122,18 +130,15 @@ if not running_df.empty:
 
 # --- Weekly grid ---
 day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-cols = st.columns(7)
 
-for i, col in enumerate(cols):
-    day = week_start + timedelta(days=i)
+
+def render_day_column(col, i, day):
     day_str = day.isoformat()
     is_today = day == today
-
     with col:
         header = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
         st.markdown(header)
 
-        # Calendar events
         day_cal = [e for e in cal_events if e["date"] == day_str]
         for event in sorted(day_cal, key=lambda e: e["start_time"]):
             time_label = event["start_time"]
@@ -147,7 +152,19 @@ for i, col in enumerate(cols):
                 unsafe_allow_html=True,
             )
 
-        # Running workouts
+        for cls in SCHOOL_SCHEDULE:
+            s = date.fromisoformat(cls["range_start"])
+            e = date.fromisoformat(cls["range_end"])
+            if s <= day <= e and day.weekday() in cls["days"]:
+                st.markdown(
+                    f'<div style="border-left: 3px solid #FF6F00; padding: 4px 6px; '
+                    f'margin: 2px 0; border-radius: 3px; font-size: 0.75em; '
+                    f'background: rgba(255,111,0,0.08);">'
+                    f'<div style="color: #FF6F00; font-size: 0.85em;">{cls["time"]}</div>'
+                    f'{cls["name"]} — {cls["room"]}</div>',
+                    unsafe_allow_html=True,
+                )
+
         if not running_df.empty:
             day_runs = running_df[running_df["date"] == day]
             for _, run in day_runs.iterrows():
@@ -164,7 +181,6 @@ for i, col in enumerate(cols):
                     unsafe_allow_html=True,
                 )
 
-        # Activities
         if not activities_df.empty:
             day_acts = activities_df[activities_df["date"] == day_str]
             for _, act in day_acts.iterrows():
@@ -186,6 +202,24 @@ for i, col in enumerate(cols):
         if is_today:
             st.markdown("---")
 
+
+past_days = [i for i in range(7) if (week_start + timedelta(days=i)) < today]
+current_future = [i for i in range(7) if (week_start + timedelta(days=i)) >= today]
+
+if past_days and current_future:
+    with st.expander(f"Earlier this week ({day_names[past_days[0]]} – {day_names[past_days[-1]]})", expanded=False):
+        past_cols = st.columns(len(past_days))
+        for ci, i in enumerate(past_days):
+            render_day_column(past_cols[ci], i, week_start + timedelta(days=i))
+
+    cols = st.columns(len(current_future))
+    for ci, i in enumerate(current_future):
+        render_day_column(cols[ci], i, week_start + timedelta(days=i))
+else:
+    cols = st.columns(7)
+    for i in range(7):
+        render_day_column(cols[i], i, week_start + timedelta(days=i))
+
 st.divider()
 
 # --- Today's Focus ---
@@ -193,10 +227,13 @@ st.subheader("Today")
 today_str = today.isoformat()
 
 today_cal = [e for e in cal_events if e["date"] == today_str]
+today_classes = [cls for cls in SCHOOL_SCHEDULE
+                 if date.fromisoformat(cls["range_start"]) <= today <= date.fromisoformat(cls["range_end"])
+                 and today.weekday() in cls["days"]]
 today_acts = activities_df[activities_df["date"] == today_str] if not activities_df.empty else pd.DataFrame()
 today_runs = running_df[running_df["date"] == today] if not running_df.empty else pd.DataFrame()
 
-if not today_cal and today_acts.empty and today_runs.empty:
+if not today_cal and not today_classes and today_acts.empty and today_runs.empty:
     st.info("Nothing scheduled for today.")
 else:
     for event in sorted(today_cal, key=lambda e: e["start_time"]):
@@ -204,6 +241,9 @@ else:
         if event["end_time"]:
             time_label += f" - {event['end_time']}"
         st.caption(f"**{time_label}** — {event['title']}")
+
+    for cls in today_classes:
+        st.caption(f"**{cls['time']}** — {cls['name']} ({cls['room']})")
 
     for _, run in today_runs.iterrows():
         title = run["workout"].split("\n")[0]
