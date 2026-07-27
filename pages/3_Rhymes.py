@@ -7,7 +7,10 @@ st.set_page_config(page_title="Rhymes", layout="wide")
 require_login()
 st.title("Rhyme Reference")
 
-data = fetch_all("rhymes", order_col="rhyme_group")
+try:
+    data = fetch_all("rhymes", order_col="rhyme_group")
+except Exception:
+    data = []
 df = pd.DataFrame(data)
 
 if df.empty:
@@ -57,6 +60,34 @@ if not df.empty:
                     elif ec3.button("X", key=f"del_w_{row['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
+
+if not df.empty:
+    export_df = df[["rhyme_group", "word"]].rename(
+        columns={"rhyme_group": "Group", "word": "Word"}
+    )
+    st.download_button(
+        "Download CSV", export_df.to_csv(index=False),
+        "rhymes.csv", "text/csv", key="dl_rhymes",
+    )
+
+    with st.expander("Analytics"):
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Total Words", len(df))
+        a2.metric("Groups", df["rhyme_group"].nunique())
+        group_sizes = df.groupby("rhyme_group").size()
+        a3.metric("Avg Group Size", f"{group_sizes.mean():.1f}")
+
+        st.markdown("**Group Size Distribution**")
+        size_dist = group_sizes.value_counts().sort_index().rename_axis("Words in Group").reset_index(name="Count")
+        st.bar_chart(size_dist.set_index("Words in Group")["Count"])
+
+        st.markdown("**Largest Groups**")
+        top_groups = group_sizes.sort_values(ascending=False).head(10)
+        top_rows = []
+        for gid, size in top_groups.items():
+            words = df[df["rhyme_group"] == gid]["word"].tolist()
+            top_rows.append({"Group": gid, "Size": size, "Words": ", ".join(words[:8]) + ("..." if len(words) > 8 else "")})
+        st.dataframe(pd.DataFrame(top_rows), use_container_width=True, hide_index=True)
 
 st.divider()
 

@@ -43,13 +43,10 @@ NFL_COLORS = {
     "OKC": ("#0080C6", "#FFC20E", "OKC"),
     "MON": ("#008E97", "#FC4C02", "Montreal"),
     "POR": ("#203731", "#FFB612", "Portland"),
-    "AUE": ("#0076B6", "#B0B7BC", "Austin"),
     "AUS": ("#0076B6", "#B0B7BC", "Austin"),
     "ANC": ("#003594", "#869397", "Anchorage"),
     "SJU": ("#0B2265", "#A71930", "San Juan"),
-    "SJV": ("#0B2265", "#A71930", "San Juan"),
     "TKY": ("#D50A0A", "#FF7900", "Tokyo"),
-    "TOK": ("#D50A0A", "#FF7900", "Tokyo"),
     "MEX": ("#006778", "#9F792C", "Mexico City"),
 }
 

@@ -1,24 +1,13 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, delete_row, update_row, save_custom_color
+from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, save_custom_color
 from colors import apply_college_theme, clear_color_cache
 from auth import require_login
+from constants import ROUND_ORDER, age_from_class
+from ui_helpers import save_edits, delete_button
 
 st.set_page_config(page_title="CFB Dynasty", layout="wide")
 require_login()
-
-CLASS_AGE = {
-    "FR": 19, "SO": 20, "JR": 21, "SR": 22,
-    "FR(RS)": 20, "SO(RS)": 21, "JR(RS)": 22, "SR(RS)": 23,
-    "RS FR": 20, "RS SO": 21, "RS JR": 22, "RS SR": 23,
-}
-
-
-def age_from_class(class_str):
-    if not class_str:
-        return None
-    return CLASS_AGE.get(class_str.strip().upper())
-
 
 games = fetch_games("cfb")
 selected_game = st.selectbox("Game", list(games.keys()))
@@ -89,7 +78,6 @@ if _has_picks:
 
 if _has_picks:
     # --- Metrics ---
-    round_order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"]
     first_rd = school_df[school_df["round"] == "1st"]
     top_3 = school_df[school_df["round"].isin(["1st", "2nd", "3rd"])]
     years_active = school_df["year"].nunique()
@@ -140,24 +128,8 @@ if _has_picks:
         key="edit_cfb",
     )
 
-    cfb_reverse = {v: k for k, v in cfb_col_names.items()}
     if st.button("Save Changes", key="save_cfb"):
-        for row_id in edited_cfb.index:
-            orig = edit_df[edit_df["id"] == row_id]
-            if orig.empty:
-                continue
-            orig_row = orig.iloc[0]
-            updates = {}
-            for disp_col in edited_cfb.columns:
-                db_col = cfb_reverse.get(disp_col, disp_col)
-                new_val = edited_cfb.loc[row_id, disp_col]
-                old_val = orig_row.get(disp_col)
-                if str(new_val) != str(old_val):
-                    updates[db_col] = new_val if pd.notna(new_val) and str(new_val).strip() else None
-            if updates:
-                update_row(table, int(row_id), updates)
-        st.success("Saved.")
-        st.rerun()
+        save_edits(table, edit_df, edited_cfb, cfb_col_names)
 
     export_df = filtered[display_cols].rename(columns=cfb_col_names)
     st.download_button(
@@ -170,23 +142,11 @@ if _has_picks:
 
     with st.expander("Delete Picks"):
         for _, row in filtered.iterrows():
-            dc1, dc2 = st.columns([6, 1])
-            dc1.caption(f"{row['name']} — {row['position']} (Yr {int(row['year'])}, {row['round']})")
-            confirm_key = f"confirm_del_pick_{row['id']}"
-            if confirm_key not in st.session_state:
-                if dc2.button("Delete", key=f"del_pick_{row['id']}"):
-                    st.session_state[confirm_key] = True
-                    st.rerun()
-            else:
-                dc2.warning("Sure?")
-                yc, nc = dc2.columns(2)
-                if yc.button("Yes", key=f"yes_pick_{row['id']}"):
-                    delete_row(table, row["id"])
-                    st.session_state.pop(confirm_key, None)
-                    st.rerun()
-                if nc.button("No", key=f"no_pick_{row['id']}"):
-                    st.session_state.pop(confirm_key, None)
-                    st.rerun()
+            delete_button(
+                table, row["id"],
+                f"{row['name']} — {row['position']} (Yr {int(row['year'])}, {row['round']})",
+                "pick",
+            )
 
     st.divider()
 
@@ -201,11 +161,11 @@ if _has_picks:
 
         st.markdown("**Round Breakdown by Year**")
         year_round = school_df.groupby(["year", "round"]).size().unstack(fill_value=0)
-        for r in round_order:
+        for r in ROUND_ORDER:
             if r not in year_round.columns:
                 year_round[r] = 0
         year_round = year_round[
-            [r for r in round_order if r in year_round.columns]
+            [r for r in ROUND_ORDER if r in year_round.columns]
         ]
         st.dataframe(year_round, use_container_width=True)
 
@@ -220,13 +180,13 @@ if _has_picks:
 
     with tab_round:
         by_round = school_df.groupby("round").size().reset_index(name="count")
-        by_round["round"] = pd.Categorical(by_round["round"], categories=round_order, ordered=True)
+        by_round["round"] = pd.Categorical(by_round["round"], categories=ROUND_ORDER, ordered=True)
         by_round = by_round.sort_values("round").dropna(subset=["round"])
         st.bar_chart(by_round.set_index("round")["count"])
 
         st.markdown("**Best Draft Round by Position**")
         if "position" in school_df.columns:
-            round_rank = {r: i for i, r in enumerate(round_order)}
+            round_rank = {r: i for i, r in enumerate(ROUND_ORDER)}
             pos_df = school_df.dropna(subset=["round", "position"]).copy()
             pos_df["round_rank"] = pos_df["round"].map(round_rank)
             best_round_pos = pos_df.groupby("position").agg(
@@ -235,10 +195,10 @@ if _has_picks:
                 avg_round=("round_rank", "mean"),
             ).reset_index()
             best_round_pos["best_round"] = best_round_pos["best_round"].map(
-                {i: r for i, r in enumerate(round_order)}
+                {i: r for i, r in enumerate(ROUND_ORDER)}
             )
             best_round_pos["avg_round"] = best_round_pos["avg_round"].apply(
-                lambda x: round_order[round(x)] if round(x) < len(round_order) else "—"
+                lambda x: ROUND_ORDER[round(x)] if round(x) < len(ROUND_ORDER) else "—"
             )
             st.dataframe(
                 best_round_pos.rename(columns={
@@ -255,10 +215,10 @@ if _has_picks:
 
         st.markdown("**Position Breakdown by Round**")
         pos_round = school_df.groupby(["position", "round"]).size().unstack(fill_value=0)
-        for r in round_order:
+        for r in ROUND_ORDER:
             if r not in pos_round.columns:
                 pos_round[r] = 0
-        pos_round = pos_round[[r for r in round_order if r in pos_round.columns]]
+        pos_round = pos_round[[r for r in ROUND_ORDER if r in pos_round.columns]]
         pos_round["Total"] = pos_round.sum(axis=1)
         pos_round = pos_round.sort_values("Total", ascending=False)
         st.dataframe(pos_round, use_container_width=True)
@@ -271,10 +231,10 @@ if _has_picks:
 
             st.markdown("**Class by Round**")
             class_round = school_df.groupby(["class", "round"]).size().unstack(fill_value=0)
-            for r in round_order:
+            for r in ROUND_ORDER:
                 if r not in class_round.columns:
                     class_round[r] = 0
-            class_round = class_round[[r for r in round_order if r in class_round.columns]]
+            class_round = class_round[[r for r in ROUND_ORDER if r in class_round.columns]]
             class_round["Total"] = class_round.sum(axis=1)
             class_round = class_round.sort_values("Total", ascending=False)
             st.dataframe(class_round, use_container_width=True)
@@ -320,8 +280,6 @@ if _has_picks:
 
 st.divider()
 
-round_order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"]
-
 # --- Add Data ---
 add_single, add_bulk = st.tabs(["Add Single Pick", "Bulk Add"])
 
@@ -334,7 +292,7 @@ with add_single:
         fc4, fc5, fc6 = st.columns(3)
         new_pos = fc4.text_input("Position")
         new_class = fc5.text_input("Class (e.g., SR, JR(RS))")
-        new_round = fc6.selectbox("Round", round_order)
+        new_round = fc6.selectbox("Round", ROUND_ORDER)
         fc7, fc8, fc9 = st.columns(3)
         new_height = fc7.text_input("Height (e.g., 6'2\")")
         new_weight = fc8.number_input("Weight", min_value=100, max_value=400, value=200)

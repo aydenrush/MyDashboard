@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-from db import fetch_all, fetch_games, get_supabase
+from db import fetch_all, fetch_games, update_row
 from auth import require_login
 from colors import get_nfl_colors
+from constants import ROUND_ORDER, AWARD_COLS
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 require_login()
@@ -44,9 +45,7 @@ with run_col:
                 if details:
                     st.caption(details)
                 if st.button("Mark Complete"):
-                    get_supabase().table("running_schedule").update(
-                        {"completed": True}
-                    ).eq("id", row["id"]).execute()
+                    update_row("running_schedule", int(row["id"]), {"completed": True})
                     st.rerun()
 
             tomorrow = today + timedelta(days=1)
@@ -160,9 +159,8 @@ if not picks_df.empty:
 
     with cfb_right:
         st.markdown("**Picks by Round**")
-        round_order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "UDFA"]
         by_round = picks_df.groupby("round").size().reset_index(name="count")
-        by_round["round"] = pd.Categorical(by_round["round"], categories=round_order, ordered=True)
+        by_round["round"] = pd.Categorical(by_round["round"], categories=ROUND_ORDER, ordered=True)
         by_round = by_round.sort_values("round").dropna(subset=["round"])
         st.bar_chart(by_round.set_index("round")["count"])
 
@@ -184,10 +182,10 @@ if not picks_df.empty:
 
         st.markdown("**Picks per Game by Round**")
         game_round = picks_df.groupby(["game", "round"]).size().unstack(fill_value=0)
-        for r in round_order:
+        for r in ROUND_ORDER:
             if r not in game_round.columns:
                 game_round[r] = 0
-        game_round = game_round[[r for r in round_order if r in game_round.columns]]
+        game_round = game_round[[r for r in ROUND_ORDER if r in game_round.columns]]
         st.dataframe(game_round, use_container_width=True)
 
         st.markdown("**Top Positions Across All Games**")
@@ -227,15 +225,8 @@ if not seasons_df.empty:
 
     with mad_left:
         st.markdown("**Award Leaders**")
-        award_cols = {
-            "sb_winner": "SB Winner",
-            "sb_mvp": "SB MVP",
-            "nfl_mvp": "NFL MVP",
-            "opoy": "OPOY",
-            "dpoy": "DPOY",
-        }
         leaders = []
-        for col, label in award_cols.items():
+        for col, label in AWARD_COLS.items():
             if col in seasons_df.columns:
                 counts = seasons_df[col].dropna().value_counts()
                 if not counts.empty:
@@ -305,10 +296,8 @@ if not seasons_df.empty:
         st.dataframe(game_stats, use_container_width=True, hide_index=True)
 
         st.markdown("**Award Leaders Across All Games**")
-        award_cols = ["sb_winner", "sb_mvp", "nfl_mvp", "opoy", "dpoy"]
-        award_labels = ["SB Winner", "SB MVP", "NFL MVP", "OPOY", "DPOY"]
         cross_leaders = []
-        for col, label in zip(award_cols, award_labels):
+        for col, label in AWARD_COLS.items():
             if col in seasons_df.columns:
                 counts = seasons_df[col].dropna().value_counts()
                 if not counts.empty:

@@ -1,8 +1,14 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, delete_row, update_row, get_config, upsert_config, save_custom_color
+from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, get_config, upsert_config, save_custom_color
 from colors import apply_nfl_theme, get_nfl_colors, clear_color_cache
 from auth import require_login
+from constants import (
+    SEASON_DISPLAY_COLS, SEASON_COL_NAMES, AWARD_COLS,
+    NFL_DIVISIONS, ALL_DIV_TEAMS,
+    AP_POSITIONS_OFF, AP_POSITIONS_DEF, AP_POSITIONS_ST, AP_POSITIONS_ALL,
+)
+from ui_helpers import save_edits, delete_button
 
 st.set_page_config(page_title="Madden Franchise", layout="wide")
 require_login()
@@ -164,21 +170,10 @@ awards_tab, records_tab, allpro_tab, insights_tab = st.tabs(
     ["Season Awards", "Team Records", "All-Pro Teams", "Insights"]
 )
 
-display_cols = [
-    "year", "sb_winner", "sb_mvp", "nfl_mvp", "coach_of_year",
-    "opoy", "dpoy", "oroy", "droy", "ninety_nine_club",
-]
-col_names = {
-    "year": "Year", "sb_winner": "SB Winner", "sb_mvp": "SB MVP",
-    "nfl_mvp": "NFL MVP", "coach_of_year": "Coach of Year",
-    "opoy": "OPOY", "dpoy": "DPOY", "oroy": "OROY", "droy": "DROY",
-    "ninety_nine_club": "99 Club",
-}
-
 with awards_tab:
-    existing = [c for c in display_cols if c in fran_seasons.columns]
+    existing = [c for c in SEASON_DISPLAY_COLS if c in fran_seasons.columns]
     edit_seasons = fran_seasons[existing].copy()
-    edit_seasons.rename(columns=col_names, inplace=True)
+    edit_seasons.rename(columns=SEASON_COL_NAMES, inplace=True)
     edit_seasons.insert(0, "id", fran_seasons["id"].values)
 
     edited = st.data_editor(
@@ -189,25 +184,9 @@ with awards_tab:
     )
 
     if st.button("Save Changes", key="save_seasons"):
-        reverse_names = {v: k for k, v in col_names.items()}
-        for row_id in edited.index:
-            orig = edit_seasons[edit_seasons["id"] == row_id]
-            if orig.empty:
-                continue
-            orig_row = orig.iloc[0]
-            updates = {}
-            for display_col in edited.columns:
-                db_col = reverse_names.get(display_col, display_col)
-                new_val = edited.loc[row_id, display_col]
-                old_val = orig_row.get(display_col)
-                if str(new_val) != str(old_val):
-                    updates[db_col] = new_val if pd.notna(new_val) and str(new_val).strip() else None
-            if updates:
-                update_row(seasons_table, int(row_id), updates)
-        st.success("Saved.")
-        st.rerun()
+        save_edits(seasons_table, edit_seasons, edited, SEASON_COL_NAMES)
 
-    export_seasons = fran_seasons[existing].rename(columns=col_names)
+    export_seasons = fran_seasons[existing].rename(columns=SEASON_COL_NAMES)
     st.download_button(
         "Download Seasons CSV", export_seasons.to_csv(index=False),
         f"{prefix}_{selected_franchise}_seasons.csv", "text/csv", key="dl_seasons",
@@ -215,32 +194,15 @@ with awards_tab:
 
     with st.expander("Delete Seasons"):
         for _, row in fran_seasons.iterrows():
-            dc1, dc2 = st.columns([6, 1])
-            dc1.caption(f"Year {int(row['year'])} — SB: {row.get('sb_winner', '—')}")
-            ck = f"confirm_del_season_{row['id']}"
-            if ck not in st.session_state:
-                if dc2.button("Delete", key=f"del_season_{row['id']}"):
-                    st.session_state[ck] = True
-                    st.rerun()
-            else:
-                dc2.warning("Sure?")
-                yc, nc = dc2.columns(2)
-                if yc.button("Yes", key=f"yes_s_{row['id']}"):
-                    delete_row(seasons_table, row["id"])
-                    st.session_state.pop(ck, None)
-                    st.rerun()
-                if nc.button("No", key=f"no_s_{row['id']}"):
-                    st.session_state.pop(ck, None)
-                    st.rerun()
+            delete_button(
+                seasons_table, row["id"],
+                f"Year {int(row['year'])} — SB: {row.get('sb_winner', '—')}",
+                "season",
+            )
 
     st.subheader("Award Leaders")
-    award_cols = {
-        "sb_winner": "SB Winner", "sb_mvp": "SB MVP", "nfl_mvp": "NFL MVP",
-        "coach_of_year": "Coach of Year", "opoy": "OPOY", "dpoy": "DPOY",
-        "oroy": "OROY", "droy": "DROY",
-    }
     leaders = []
-    for acol, label in award_cols.items():
+    for acol, label in AWARD_COLS.items():
         if acol in fran_seasons.columns:
             counts = fran_seasons[acol].dropna().value_counts()
             if not counts.empty:
@@ -254,7 +216,7 @@ with awards_tab:
         st.dataframe(pd.DataFrame(leaders), use_container_width=True, hide_index=True)
 
     st.subheader("Award Counts")
-    for acol, label in award_cols.items():
+    for acol, label in AWARD_COLS.items():
         if acol in fran_seasons.columns:
             counts = fran_seasons[acol].dropna().value_counts().head(10)
             if not counts.empty:
@@ -297,39 +259,14 @@ with records_tab:
                     key="edit_wins",
                 )
                 if st.button("Save Changes", key="save_wins"):
-                    for row_id in edited_wins.index:
-                        orig = edit_wins[edit_wins["id"] == row_id]
-                        if orig.empty:
-                            continue
-                        orig_row = orig.iloc[0]
-                        updates = {}
-                        if edited_wins.loc[row_id, "Team"] != orig_row["Team"]:
-                            updates["team"] = edited_wins.loc[row_id, "Team"]
-                        if edited_wins.loc[row_id, "Wins"] != orig_row["Wins"]:
-                            updates["wins"] = float(edited_wins.loc[row_id, "Wins"])
-                        if updates:
-                            update_row(wins_table, int(row_id), updates)
-                    st.success("Saved.")
-                    st.rerun()
+                    save_edits(wins_table, edit_wins, edited_wins, {"team": "Team", "wins": "Wins"})
 
                 for _, row in year_data.iterrows():
-                    dc1, dc2 = st.columns([6, 1])
-                    dc1.caption(f"{row['team']} — {row['wins']:.0f}W")
-                    ck = f"confirm_del_win_{row['id']}"
-                    if ck not in st.session_state:
-                        if dc2.button("Delete", key=f"del_win_{row['id']}"):
-                            st.session_state[ck] = True
-                            st.rerun()
-                    else:
-                        dc2.warning("Sure?")
-                        yc, nc = dc2.columns(2)
-                        if yc.button("Yes", key=f"yes_w_{row['id']}"):
-                            delete_row(wins_table, row["id"])
-                            st.session_state.pop(ck, None)
-                            st.rerun()
-                        if nc.button("No", key=f"no_w_{row['id']}"):
-                            st.session_state.pop(ck, None)
-                            st.rerun()
+                    delete_button(
+                        wins_table, row["id"],
+                        f"{row['team']} — {row['wins']:.0f}W",
+                        "win",
+                    )
 
         st.download_button(
             "Download Team Wins CSV",
@@ -371,14 +308,8 @@ with records_tab:
                         for _, dr in div_rows.iterrows():
                             name = NFL_COLORS[dr["team"]][2] if dr["team"] in NFL_COLORS else dr["team"]
                             st.caption(f"{name} ({dr['team']}): {dr['wins']:.0f}W")
-                    else:
-                        remaining = div_data[~div_data["team"].isin(
-                            [t for ts in NFL_DIVISIONS.values() for t in ts]
-                        )]
 
-        custom_teams = div_data[~div_data["team"].isin(
-            [t for ts in NFL_DIVISIONS.values() for t in ts]
-        )]
+        custom_teams = div_data[~div_data["team"].isin(ALL_DIV_TEAMS)]
         if not custom_teams.empty:
             st.markdown("**Custom / Relocated**")
             for _, cr in custom_teams.sort_values("wins", ascending=False).iterrows():
@@ -410,20 +341,7 @@ with allpro_tab:
         )
 
         if st.button("Save Changes", key="save_allpro"):
-            for row_id in edited_ap.index:
-                orig = edit_ap[edit_ap["id"] == row_id]
-                if orig.empty:
-                    continue
-                orig_row = orig.iloc[0]
-                updates = {}
-                if edited_ap.loc[row_id, "Position"] != orig_row["Position"]:
-                    updates["position_label"] = edited_ap.loc[row_id, "Position"]
-                if edited_ap.loc[row_id, "Player"] != orig_row["Player"]:
-                    updates["player"] = edited_ap.loc[row_id, "Player"]
-                if updates:
-                    update_row(allpro_table, int(row_id), updates)
-            st.success("Saved.")
-            st.rerun()
+            save_edits(allpro_table, edit_ap, edited_ap, {"position_label": "Position", "player": "Player"})
 
         st.download_button(
             "Download All-Pro CSV",
@@ -435,23 +353,11 @@ with allpro_tab:
 
         with st.expander("Delete All-Pro Selections"):
             for _, row in year_ap.iterrows():
-                dc1, dc2 = st.columns([6, 1])
-                dc1.caption(f"{row['position_label']} — {row['player']}")
-                ck = f"confirm_del_ap_{row['id']}"
-                if ck not in st.session_state:
-                    if dc2.button("Delete", key=f"del_ap_{row['id']}"):
-                        st.session_state[ck] = True
-                        st.rerun()
-                else:
-                    dc2.warning("Sure?")
-                    yc, nc = dc2.columns(2)
-                    if yc.button("Yes", key=f"yes_ap_{row['id']}"):
-                        delete_row(allpro_table, row["id"])
-                        st.session_state.pop(ck, None)
-                        st.rerun()
-                    if nc.button("No", key=f"no_ap_{row['id']}"):
-                        st.session_state.pop(ck, None)
-                        st.rerun()
+                delete_button(
+                    allpro_table, row["id"],
+                    f"{row['position_label']} — {row['player']}",
+                    "ap",
+                )
 
         st.subheader("Most All-Pro Selections")
         ap_counts = allpro_df["player"].value_counts().head(15)
@@ -491,7 +397,7 @@ with insights_tab:
 
     st.subheader("Award Diversity")
     unique_awards = {}
-    for acol, label in award_cols.items():
+    for acol, label in AWARD_COLS.items():
         if acol in fran_seasons.columns:
             unique_awards[label] = fran_seasons[acol].dropna().nunique()
     if unique_awards:
@@ -510,25 +416,9 @@ with insights_tab:
 
 st.divider()
 
-NFL_DIVISIONS = {
-    "AFC East": ["BUF", "MIA", "NE", "NYJ"],
-    "AFC North": ["BAL", "CIN", "CLE", "PIT"],
-    "AFC South": ["HOU", "IND", "JAX", "TEN"],
-    "AFC West": ["DEN", "KC", "LAC", "LV"],
-    "NFC East": ["DAL", "NYG", "PHI", "WAS"],
-    "NFC North": ["CHI", "DET", "GB", "MIN"],
-    "NFC South": ["ATL", "CAR", "NO", "TB"],
-    "NFC West": ["ARI", "LAR", "SEA", "SF"],
-}
-
 add_eos, add_single, add_bulk, add_wins, add_allpro = st.tabs(
     ["End of Season", "Add Single Season", "Bulk Add Seasons", "Add Team Wins", "Add All-Pro"]
 )
-
-AP_POSITIONS_OFF = ["QB", "RB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT"]
-AP_POSITIONS_DEF = ["DE", "DT", "OLB", "MLB", "CB", "FS", "SS"]
-AP_POSITIONS_ST = ["K", "P", "KR", "PR"]
-AP_POSITIONS_ALL = AP_POSITIONS_OFF + AP_POSITIONS_DEF + AP_POSITIONS_ST
 
 with add_eos:
     st.subheader("End of Season Entry")
@@ -623,8 +513,7 @@ with add_eos:
 
             # Team wins
             wins_rows = []
-            all_div_teams = [t for ts in NFL_DIVISIONS.values() for t in ts]
-            for team in all_div_teams:
+            for team in ALL_DIV_TEAMS:
                 record = st.session_state.get(f"eos_rec_{team}", "").strip()
                 if not record:
                     continue
@@ -843,10 +732,7 @@ with add_wins:
         if st.form_submit_button("Submit Records"):
             db_rows = []
             errors = []
-            all_div_teams = [
-                t for teams in NFL_DIVISIONS.values() for t in teams
-            ]
-            for team in all_div_teams:
+            for team in ALL_DIV_TEAMS:
                 record = st.session_state.get(f"rec_{team}", "").strip()
                 if not record:
                     continue
