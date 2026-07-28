@@ -22,6 +22,7 @@ ACTIVITY_TYPES = {
 }
 
 TIME_SLOTS = ["Morning", "Midday", "Afternoon", "Evening"]
+TIME_DISPLAY = {"Morning": "8 AM", "Midday": "11 AM", "Afternoon": "2 PM", "Evening": "5:30 PM"}
 
 SCHOOL_SCHEDULE = [
     {"name": "CS 25000 Lab", "days": [3], "time": "9:30 - 11:20 AM", "range_start": "2026-08-27", "range_end": "2026-12-10", "room": "SL 251"},
@@ -132,12 +133,18 @@ if not running_df.empty:
 day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
-def render_day_column(col, i, day):
+def render_day_column(col, i, day, clickable=True):
     day_str = day.isoformat()
     is_today = day == today
     with col:
-        header = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
-        st.markdown(header)
+        if clickable:
+            label = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
+            if st.button(label, key=f"sel_day_{day_str}", use_container_width=True):
+                st.session_state["focus_day"] = day_str
+                st.rerun()
+        else:
+            header = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
+            st.markdown(header)
 
         day_cal = [e for e in cal_events if e["date"] == day_str]
         for event in sorted(day_cal, key=lambda e: e["start_time"]):
@@ -189,12 +196,13 @@ def render_day_column(col, i, day):
                 done = act.get("completed", False)
                 title = act.get("title") or label_text
                 slot = act.get("time_slot", "")
+                time_str = TIME_DISPLAY.get(slot, slot) if slot else ""
                 st.markdown(
                     f'<div style="border-left: 3px solid {color}; padding: 4px 6px; '
                     f'margin: 2px 0; border-radius: 3px; font-size: 0.75em; '
                     f'opacity: {"0.5" if done else "1"};">'
                     f'<div style="color: {color}; font-size: 0.85em;">{label_text}'
-                    f'{" - " + slot if slot else ""}</div>'
+                    f'{" - " + time_str if time_str else ""}</div>'
                     f'{"~~" + title + "~~" if done else title}</div>',
                     unsafe_allow_html=True,
                 )
@@ -222,50 +230,63 @@ else:
 
 st.divider()
 
-# --- Today's Focus ---
-st.subheader("Today")
-today_str = today.isoformat()
+# --- Day Focus ---
+if "focus_day" not in st.session_state:
+    st.session_state["focus_day"] = today.isoformat()
 
-today_cal = [e for e in cal_events if e["date"] == today_str]
-today_classes = [cls for cls in SCHOOL_SCHEDULE
-                 if date.fromisoformat(cls["range_start"]) <= today <= date.fromisoformat(cls["range_end"])
-                 and today.weekday() in cls["days"]]
-today_acts = activities_df[activities_df["date"] == today_str] if not activities_df.empty else pd.DataFrame()
-today_runs = running_df[running_df["date"] == today] if not running_df.empty else pd.DataFrame()
+focus_str = st.session_state["focus_day"]
+focus_date = date.fromisoformat(focus_str)
+focus_weekday = day_names[focus_date.weekday()]
 
-if not today_cal and not today_classes and today_acts.empty and today_runs.empty:
-    st.info("Nothing scheduled for today.")
+fc1, fc2 = st.columns([6, 1])
+fc1.subheader(f"{focus_weekday} {focus_date.strftime('%B %d')}")
+if focus_str != today.isoformat():
+    if fc2.button("Back to today", key="focus_today"):
+        st.session_state["focus_day"] = today.isoformat()
+        st.rerun()
+
+focus_cal = [e for e in cal_events if e["date"] == focus_str]
+focus_classes = [cls for cls in SCHOOL_SCHEDULE
+                 if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
+                 and focus_date.weekday() in cls["days"]]
+focus_acts = activities_df[activities_df["date"] == focus_str] if not activities_df.empty else pd.DataFrame()
+focus_runs = running_df[running_df["date"] == focus_date] if not running_df.empty else pd.DataFrame()
+
+if not focus_cal and not focus_classes and focus_acts.empty and focus_runs.empty:
+    st.info("Nothing scheduled.")
 else:
-    for event in sorted(today_cal, key=lambda e: e["start_time"]):
+    for event in sorted(focus_cal, key=lambda e: e["start_time"]):
         time_label = event["start_time"]
         if event["end_time"]:
             time_label += f" - {event['end_time']}"
         st.caption(f"**{time_label}** — {event['title']}")
 
-    for cls in today_classes:
+    for cls in focus_classes:
         st.caption(f"**{cls['time']}** — {cls['name']} ({cls['room']})")
 
-    for _, run in today_runs.iterrows():
+    for _, run in focus_runs.iterrows():
         title = run["workout"].split("\n")[0]
         rc1, rc2 = st.columns([6, 1])
         if run["completed"]:
             rc1.markdown(f"~~Running: {title}~~ — Done")
         else:
             rc1.markdown(f"**Running:** {title}")
-            if rc2.button("Done", key=f"today_run_{run['id']}"):
+            if rc2.button("Done", key=f"focus_run_{run['id']}"):
                 update_row("running_schedule", int(run["id"]), {"completed": True})
                 st.rerun()
 
-    for _, act in today_acts.iterrows():
+    for _, act in focus_acts.iterrows():
         atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
         label_text, _ = atype
         title = act.get("title") or label_text
+        slot = act.get("time_slot", "")
+        time_str = TIME_DISPLAY.get(slot, slot) if slot else ""
         ac1, ac2 = st.columns([6, 1])
         if act.get("completed"):
-            ac1.markdown(f"~~{label_text}: {title}~~ — Done")
+            ac1.markdown(f"~~{time_str + ' · ' if time_str else ''}{label_text}: {title}~~ — Done")
         else:
-            ac1.markdown(f"**{label_text}:** {title}")
-            if ac2.button("Done", key=f"today_act_{act['id']}"):
+            ac1.markdown(f"**{time_str + ' · ' if time_str else ''}{label_text}:** {title}")
+            if ac2.button("Done", key=f"focus_act_{act['id']}"):
                 update_row("activities", int(act["id"]), {"completed": True})
                 st.rerun()
 
@@ -377,3 +398,86 @@ if not activities_df.empty:
                     if mc3.button("Del", key=f"del_act_{act['id']}"):
                         st.session_state[ck] = True
                         st.rerun()
+
+# --- Sync to Phone ---
+with st.expander("Sync to phone"):
+    ICAL_FEED_URL = f"{st.secrets['SUPABASE_URL']}/storage/v1/object/public/ical/training_plan.ics"
+
+    TIME_HOURS = {"Morning": (8, 0), "Midday": (11, 0), "Afternoon": (14, 0), "Evening": (17, 30)}
+    DURATION_MAP = {
+        "lifting": 45, "cycling": 60, "frisbee_golf": 120,
+        "rap_writing": 90, "running": 45, "other": 60,
+    }
+
+    def build_ics():
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//MyDashboard//Planner//EN",
+            "CALSCALE:GREGORIAN",
+            "X-WR-CALNAME:Training Plan",
+        ]
+
+        if not activities_df.empty:
+            for _, act in activities_df.iterrows():
+                atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
+                label_text, _ = atype
+                title = act.get("title") or label_text
+                summary = f"{label_text}: {title}" if act.get("title") else label_text
+                slot = act.get("time_slot", "Morning")
+                h, m = TIME_HOURS.get(slot, (8, 0))
+                dur = act.get("duration_min") or DURATION_MAP.get(act["activity_type"], 60)
+                d = act["date"].replace("-", "")
+                dtstart = f"{d}T{h:02d}{m:02d}00"
+                end_h, end_m = divmod(h * 60 + m + dur, 60)
+                dtend = f"{d}T{end_h:02d}{end_m:02d}00"
+                lines.extend([
+                    "BEGIN:VEVENT",
+                    f"UID:act-{act['id']}@mydashboard",
+                    f"DTSTART:{dtstart}",
+                    f"DTEND:{dtend}",
+                    f"SUMMARY:{summary}",
+                    "END:VEVENT",
+                ])
+
+        if not running_df.empty:
+            for _, run in running_df.iterrows():
+                title = run["workout"].split("\n")[0]
+                d = run["date"].strftime("%Y%m%d")
+                lines.extend([
+                    "BEGIN:VEVENT",
+                    f"UID:run-{run['id']}@mydashboard",
+                    f"DTSTART:{d}T063000",
+                    f"DTEND:{d}T073000",
+                    f"SUMMARY:Running: {title}",
+                    "END:VEVENT",
+                ])
+
+        lines.append("END:VCALENDAR")
+        return "\r\n".join(lines)
+
+    def publish_feed():
+        from db import get_supabase
+        sb = get_supabase()
+        ics_bytes = build_ics().encode("utf-8")
+        try:
+            sb.storage.from_("ical").update(
+                "training_plan.ics", ics_bytes,
+                {"content-type": "text/calendar", "cache-control": "max-age=300"},
+            )
+        except Exception:
+            sb.storage.from_("ical").upload(
+                "training_plan.ics", ics_bytes,
+                {"content-type": "text/calendar", "cache-control": "max-age=300"},
+            )
+
+    if st.button("Publish feed", key="publish_ical"):
+        try:
+            publish_feed()
+            st.success("Published! Subscribe on your phone using the URL below.")
+        except Exception as e:
+            st.error(f"Failed — run ical_bucket.sql in Supabase first: {e}")
+
+    webcal_url = ICAL_FEED_URL.replace("https://", "webcal://")
+    st.code(webcal_url, language=None)
+    st.caption("Add this URL as a calendar subscription on your phone. It refreshes automatically.")
