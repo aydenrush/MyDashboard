@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 from db import fetch_all, fetch_games, update_row
 from auth import require_login
 from colors import get_nfl_colors
@@ -14,7 +15,7 @@ st.link_button("Ayden Music", "https://aydenmusic.streamlit.app")
 
 NFL_COLORS = get_nfl_colors()
 
-today = date.today()
+today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 
 # --- Today's Workout ---
 try:

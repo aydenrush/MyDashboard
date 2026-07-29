@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 import urllib.request
 from db import fetch_all, insert_row, delete_row, update_row
 from auth import require_login
@@ -10,7 +11,7 @@ require_login()
 
 st.title("Weekly Planner")
 
-today = date.today()
+today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 
 ACTIVITY_TYPES = {
     "running": ("Running", "#F44336"),

@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 from db import fetch_all, insert_rows, update_row, get_supabase
 from auth import require_login
 from ui_helpers import delete_button
@@ -16,7 +17,7 @@ except Exception:
     data = []
 df = pd.DataFrame(data)
 
-today = date.today()
+today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 _has_data = not df.empty
 
 if not _has_data:

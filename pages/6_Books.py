@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from db import fetch_all, insert_row, update_row, delete_row
 from auth import require_login
 
@@ -21,7 +22,7 @@ STATUS_LABELS = {
     "want_to_read": "Want to Read",
 }
 
-today = date.today()
+today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 
 # --- Currently Reading ---
 reading = df[df["status"] == "reading"] if not df.empty else pd.DataFrame()
