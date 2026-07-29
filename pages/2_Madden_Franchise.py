@@ -401,7 +401,7 @@ def render_player_card(pos, player_data, colors):
     if team:
         info_parts.append(team)
     if ovr:
-        info_parts.append(f"{ovr}")
+        info_parts.append(f"{ovr} OVR")
     info_line = " · ".join(info_parts)
 
     if player_data and team and team in colors:
