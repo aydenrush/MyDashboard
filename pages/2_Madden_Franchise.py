@@ -703,11 +703,25 @@ with insights_tab:
         nn_data = nn_data[nn_data[nn_col].str.strip() != ""]
         if not nn_data.empty:
             st.subheader("99 Club")
+
+            try:
+                ap_all = fetch_all(allpro_table, order_col="year")
+            except Exception:
+                ap_all = []
+            ap_lookup = {}
+            for ap_row in ap_all:
+                p = _resolve_player(ap_row, NFL_COLORS)
+                if p["team"]:
+                    key = (p["name"].lower(), int(ap_row["year"]))
+                    ap_lookup[key] = p["team"]
+
             all_members = []
             for _, nr in nn_data.iterrows():
+                yr = int(nr["year"])
                 names = [n.strip() for n in re.split(r"[,/;]+", nr[nn_col]) if n.strip()]
                 for name in names:
-                    all_members.append({"Player": name, "Year": int(nr["year"])})
+                    team = ap_lookup.get((name.lower(), yr), "")
+                    all_members.append({"Player": name, "Year": yr, "Team": team})
             members_df = pd.DataFrame(all_members)
 
             nm1, nm2, nm3 = st.columns(3)
@@ -720,13 +734,35 @@ with insights_tab:
             if not multi.empty:
                 st.markdown("**99 Club Repeat Members**")
                 for player, count in multi.items():
-                    years = sorted(members_df[members_df["Player"] == player]["Year"].tolist())
-                    year_str = ", ".join(str(y) for y in years)
-                    st.caption(f"**{player}** — {count}x ({year_str})")
+                    p_rows = members_df[members_df["Player"] == player].sort_values("Year")
+                    parts = []
+                    prev_team = None
+                    for _, pr in p_rows.iterrows():
+                        t = pr["Team"]
+                        yr = pr["Year"]
+                        if t:
+                            switched = prev_team and t != prev_team
+                            tag = f"**{t}**" if switched else t
+                            parts.append(f"{yr} ({tag})")
+                            prev_team = t
+                        else:
+                            parts.append(str(yr))
+                    teams = [t for t in p_rows["Team"].unique() if t]
+                    suffix = ""
+                    if len(teams) > 1:
+                        suffix = f" — switched teams: {' -> '.join(teams)}"
+                    st.caption(f"**{player}** — {count}x: {', '.join(parts)}{suffix}")
 
             st.markdown("**99 Club by Year**")
-            for _, nr in nn_data.sort_values("year", ascending=False).iterrows():
-                st.caption(f"**Year {int(nr['year'])}**: {nr[nn_col]}")
+            for yr_val in sorted(members_df["Year"].unique(), reverse=True):
+                yr_members = members_df[members_df["Year"] == yr_val]
+                labels = []
+                for _, mr in yr_members.iterrows():
+                    label = mr["Player"]
+                    if mr["Team"]:
+                        label += f" ({mr['Team']})"
+                    labels.append(label)
+                st.caption(f"**Year {yr_val}**: {', '.join(labels)}")
 
             if len(members_df) >= 3:
                 st.markdown("**Most 99 Club Appearances**")
