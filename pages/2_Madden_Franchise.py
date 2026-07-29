@@ -1,3 +1,5 @@
+import re
+
 import streamlit as st
 import pandas as pd
 from db import (
@@ -344,6 +346,50 @@ with records_tab:
                     st.caption(f"{name} ({cr['team']}): {cr['wins']:.0f}W")
 
 
+def parse_player_string(text, colors):
+    """Extract clean name, team, and OVR from legacy formats like 'Player TEAM (99 OVR)'."""
+    clean = text.strip()
+    ovr = None
+    team = None
+
+    paren = re.search(r'\((\d+)\s*(?:OVR)?\)', clean)
+    if paren:
+        ovr = int(paren.group(1))
+        clean = clean[:paren.start()].strip()
+
+    words = clean.split()
+    for i in range(len(words) - 1, 0, -1):
+        w = words[i].upper()
+        if w in colors:
+            team = w
+            words.pop(i)
+            break
+        if w.isdigit() and ovr is None:
+            ovr = int(w)
+            words.pop(i)
+
+    return " ".join(words), team, ovr
+
+
+def _resolve_player(row, colors):
+    """Build player dict, parsing team/OVR from name if separate columns are empty."""
+    raw = row["player"]
+    team = row.get("team", "") or ""
+    ovr = int(row["ovr"]) if pd.notna(row.get("ovr")) else None
+
+    if not team:
+        parsed_name, parsed_team, parsed_ovr = parse_player_string(raw, colors)
+        if parsed_team:
+            raw = parsed_name
+            team = parsed_team
+        if parsed_ovr and not ovr:
+            ovr = parsed_ovr
+            if not parsed_team:
+                raw = parsed_name
+
+    return {"name": raw, "team": team, "ovr": ovr}
+
+
 # --- All-Pro Formation Renderer ---
 def render_player_card(pos, player_data, colors):
     name = player_data.get("name", "—") if player_data else "—"
@@ -405,11 +451,7 @@ def render_all_pro_formation(year_data, colors):
         pos = row["position_label"]
         mapped = AP_ALIASES.get(pos, pos)
         if mapped not in players:
-            players[mapped] = {
-                "name": row["player"],
-                "team": row.get("team", "") or "",
-                "ovr": int(row["ovr"]) if pd.notna(row.get("ovr")) else None,
-            }
+            players[mapped] = _resolve_player(row, colors)
 
     html = (
         '<div style="background:linear-gradient(180deg,#2d5a27 0%,#1a4a1a 100%);'
@@ -438,7 +480,7 @@ def render_all_pro_formation(year_data, colors):
     return html
 
 
-def render_depth_chart(year_data):
+def render_depth_chart(year_data, colors):
     groups = {}
     for _, row in year_data.iterrows():
         pos = row["position_label"]
@@ -446,14 +488,13 @@ def render_depth_chart(year_data):
         base = ap_display_label(mapped)
         if base not in groups:
             groups[base] = []
-        info = row["player"]
-        team = row.get("team", "") or ""
-        ovr = int(row["ovr"]) if pd.notna(row.get("ovr")) else None
+        p = _resolve_player(row, colors)
+        info = p["name"]
         extras = []
-        if team:
-            extras.append(team)
-        if ovr:
-            extras.append(str(ovr))
+        if p["team"]:
+            extras.append(p["team"])
+        if p["ovr"]:
+            extras.append(str(p["ovr"]))
         if extras:
             info += f" ({', '.join(extras)})"
         groups[base].append(info)
@@ -488,7 +529,7 @@ with allpro_tab:
         st.markdown(render_all_pro_formation(year_ap, NFL_COLORS), unsafe_allow_html=True)
 
         with st.expander("Full Depth Chart"):
-            st.markdown(render_depth_chart(year_ap), unsafe_allow_html=True)
+            st.markdown(render_depth_chart(year_ap, NFL_COLORS), unsafe_allow_html=True)
 
         with st.expander("Edit Year Data"):
             edit_cols = ["id", "position_label", "player"]
@@ -517,31 +558,80 @@ with allpro_tab:
             f"{prefix}_allpro.csv", "text/csv", key="dl_allpro",
         )
 
-        st.subheader("Most All-Pro Selections")
-        ap_counts = allpro_df["player"].value_counts().head(15)
-        if not ap_counts.empty:
-            st.bar_chart(ap_counts)
+        resolved = allpro_df.apply(lambda r: _resolve_player(r, NFL_COLORS), axis=1, result_type="expand")
+        ap_clean = allpro_df.copy()
+        ap_clean["clean_name"] = resolved["name"]
+        ap_clean["r_team"] = resolved["team"]
+        ap_clean["r_ovr"] = resolved["ovr"]
 
-        has_teams = "team" in allpro_df.columns and allpro_df["team"].notna().any()
-        has_ovr = "ovr" in allpro_df.columns and allpro_df["ovr"].notna().any()
+        st.subheader("Player Tracker")
+        player_counts = ap_clean["clean_name"].value_counts()
+        repeat_players = player_counts[player_counts > 1]
+        if not repeat_players.empty:
+            sel_player = st.selectbox(
+                "Select Player", repeat_players.index.tolist(), key="ap_player_sel",
+            )
+            player_rows = ap_clean[ap_clean["clean_name"] == sel_player].sort_values("year")
+            career_data = []
+            for _, pr in player_rows.iterrows():
+                pos = ap_display_label(AP_ALIASES.get(pr["position_label"], pr["position_label"]))
+                career_data.append({
+                    "Year": int(pr["year"]),
+                    "Position": pos,
+                    "Team": pr["r_team"] or "—",
+                    "OVR": int(pr["r_ovr"]) if pr["r_ovr"] else "—",
+                })
+            career_df = pd.DataFrame(career_data)
+            cm1, cm2, cm3 = st.columns(3)
+            cm1.metric("All-Pro Selections", len(career_data))
+            positions_played = career_df["Position"].unique()
+            cm2.metric("Positions", ", ".join(positions_played))
+            teams_played = [t for t in career_df["Team"].unique() if t != "—"]
+            cm3.metric("Teams", ", ".join(teams_played) if teams_played else "—")
+            st.dataframe(career_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Need multiple years of data to track players across seasons.")
+
+        st.subheader("Most All-Pro Selections")
+        if not player_counts.empty:
+            st.bar_chart(player_counts.head(15))
+
+        has_teams = ap_clean["r_team"].notna().any() and (ap_clean["r_team"] != "").any()
+        has_ovr = ap_clean["r_ovr"].notna().any()
 
         if has_teams:
             st.subheader("Teams with Most All-Pro Selections")
-            team_counts = allpro_df["team"].dropna().value_counts().head(15)
+            team_counts = ap_clean["r_team"].replace("", pd.NA).dropna().value_counts().head(15)
             if not team_counts.empty:
                 st.bar_chart(team_counts)
 
         if has_ovr:
             st.subheader("Highest Rated All-Pros")
-            allpro_df["ovr_num"] = pd.to_numeric(allpro_df["ovr"], errors="coerce")
-            top_ovr = allpro_df.dropna(subset=["ovr_num"]).nlargest(10, "ovr_num")
+            ap_clean["ovr_num"] = pd.to_numeric(ap_clean["r_ovr"], errors="coerce")
+            top_ovr = ap_clean.dropna(subset=["ovr_num"]).nlargest(10, "ovr_num")
             if not top_ovr.empty:
-                display_top = top_ovr[["player", "position_label", "year", "ovr"]].rename(
-                    columns={"player": "Player", "position_label": "Pos", "year": "Year", "ovr": "OVR"}
-                )
+                display_top = top_ovr[["clean_name", "position_label", "year", "r_ovr"]].copy()
+                display_top.columns = ["Player", "Pos", "Year", "OVR"]
                 if has_teams:
-                    display_top.insert(1, "Team", top_ovr["team"].values)
+                    display_top.insert(1, "Team", top_ovr["r_team"].values)
                 st.dataframe(display_top, use_container_width=True, hide_index=True)
+
+        if has_teams:
+            st.subheader("All-Pro Factory")
+            st.caption("Teams ranked by total All-Pro selections across all years")
+            team_pos = ap_clean[ap_clean["r_team"] != ""].copy()
+            if not team_pos.empty:
+                team_pos["side"] = team_pos["position_label"].apply(
+                    lambda p: "OFF" if p in AP_POSITIONS_OFF
+                    else ("DEF" if p in AP_POSITIONS_DEF else "ST")
+                )
+                factory = team_pos.groupby("r_team").agg(
+                    Total=("clean_name", "count"),
+                    OFF=("side", lambda s: (s == "OFF").sum()),
+                    DEF=("side", lambda s: (s == "DEF").sum()),
+                    ST=("side", lambda s: (s == "ST").sum()),
+                ).sort_values("Total", ascending=False).head(15)
+                st.dataframe(factory, use_container_width=True)
 
 with insights_tab:
     st.subheader("Dynasty Streaks")
@@ -587,6 +677,42 @@ with insights_tab:
         parity = fran_wins_clean2.groupby("year")["wins"].std().dropna()
         if not parity.empty:
             st.line_chart(parity)
+
+    # --- 99 Club ---
+    nn_col = "ninety_nine_club"
+    if nn_col in fran_seasons.columns:
+        nn_data = fran_seasons[[nn_col, "year"]].dropna(subset=[nn_col])
+        nn_data = nn_data[nn_data[nn_col].str.strip() != ""]
+        if not nn_data.empty:
+            st.subheader("99 Club")
+            all_members = []
+            for _, nr in nn_data.iterrows():
+                names = [n.strip() for n in re.split(r"[,/;]+", nr[nn_col]) if n.strip()]
+                for name in names:
+                    all_members.append({"Player": name, "Year": int(nr["year"])})
+            members_df = pd.DataFrame(all_members)
+
+            nm1, nm2, nm3 = st.columns(3)
+            nm1.metric("Total 99 Ratings", len(members_df))
+            nm2.metric("Unique Players", members_df["Player"].nunique())
+            member_counts = members_df["Player"].value_counts()
+            multi = member_counts[member_counts > 1]
+            nm3.metric("Multi-Year 99s", len(multi))
+
+            if not multi.empty:
+                st.markdown("**99 Club Repeat Members**")
+                for player, count in multi.items():
+                    years = sorted(members_df[members_df["Player"] == player]["Year"].tolist())
+                    year_str = ", ".join(str(y) for y in years)
+                    st.caption(f"**{player}** — {count}x ({year_str})")
+
+            st.markdown("**99 Club by Year**")
+            for _, nr in nn_data.sort_values("year", ascending=False).iterrows():
+                st.caption(f"**Year {int(nr['year'])}**: {nr[nn_col]}")
+
+            if len(members_df) >= 3:
+                st.markdown("**Most 99 Club Appearances**")
+                st.bar_chart(member_counts.head(10))
 
 st.divider()
 
