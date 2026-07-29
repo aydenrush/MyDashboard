@@ -34,6 +34,9 @@ if not reading.empty:
             title_line += f" — {book['author']}"
         if book.get("genre"):
             title_line += f" · {book['genre']}"
+        yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
+        if yr > 0:
+            title_line += f" · {yr}"
 
         cur = int(book["current_page"]) if pd.notna(book.get("current_page")) else 0
         total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
@@ -109,12 +112,12 @@ if not completed.empty:
                 line += f" — {book['author']}"
             if book.get("genre"):
                 line += f" · {book['genre']}"
+            yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
+            if yr > 0:
+                line += f" · {yr}"
             total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
             if total > 0:
                 line += f" · {total}p"
-            if book.get("rating") and pd.notna(book["rating"]):
-                stars = int(book["rating"])
-                line += f" · {'*' * stars}"
             if book.get("start_date") and book.get("end_date"):
                 s = book["start_date"]
                 e = book["end_date"]
@@ -144,6 +147,9 @@ if not want.empty:
                 line += f" — {book['author']}"
             if book.get("genre"):
                 line += f" · {book['genre']}"
+            yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
+            if yr > 0:
+                line += f" · {yr}"
             total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
             if total > 0:
                 line += f" · {total}p"
@@ -164,7 +170,7 @@ with st.form("add_book"):
     fc1, fc2 = st.columns(2)
     new_title = fc1.text_input("Title")
     new_author = fc2.text_input("Author")
-    fc3, fc4, fc5 = st.columns(3)
+    fc3, fc4, fc5, fc6 = st.columns(4)
     new_status = fc3.selectbox(
         "Status",
         list(STATUS_LABELS.keys()),
@@ -172,9 +178,8 @@ with st.form("add_book"):
     )
     new_genre = fc4.text_input("Genre", placeholder="e.g., Fiction, Self-help, CS")
     new_pages = fc5.number_input("Total Pages", min_value=0, max_value=9999, value=0, help="0 = unknown")
-    fc6, fc7 = st.columns(2)
-    new_rating = fc6.slider("Rating", 0, 5, 0, help="0 = no rating")
-    new_notes = fc7.text_input("Notes (optional)")
+    new_year = fc6.number_input("Year Published", min_value=0, max_value=2030, value=0, help="0 = unknown")
+    new_notes = st.text_input("Notes (optional)")
 
     if st.form_submit_button("Add"):
         if new_title.strip():
@@ -185,7 +190,7 @@ with st.form("add_book"):
                 "genre": new_genre.strip() or None,
                 "total_pages": new_pages if new_pages > 0 else None,
                 "current_page": 0,
-                "rating": new_rating if new_rating > 0 else None,
+                "year_published": new_year if new_year > 0 else None,
                 "notes": new_notes.strip() or None,
             }
             if new_status == "reading":
@@ -259,7 +264,11 @@ if not df.empty:
                         value=int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0,
                         key=f"edp_{book['id']}",
                     )
-                    ed_rating = ec5.slider("Rating", 0, 5, int(book["rating"]) if pd.notna(book.get("rating")) else 0, key=f"edr_{book['id']}")
+                    ed_year = ec5.number_input(
+                        "Year Published", min_value=0, max_value=2030,
+                        value=int(book["year_published"]) if pd.notna(book.get("year_published")) else 0,
+                        key=f"edy_{book['id']}",
+                    )
                     ed_notes = st.text_input("Notes", value=book.get("notes") or "", key=f"edn_{book['id']}")
 
                     if st.form_submit_button("Save"):
@@ -268,7 +277,7 @@ if not df.empty:
                             "author": ed_author.strip() or None,
                             "genre": ed_genre.strip() or None,
                             "total_pages": ed_pages if ed_pages > 0 else None,
-                            "rating": ed_rating if ed_rating > 0 else None,
+                            "year_published": ed_year if ed_year > 0 else None,
                             "notes": ed_notes.strip() or None,
                         })
                         st.session_state.pop(f"editing_book_{book['id']}", None)
@@ -283,11 +292,20 @@ if not df.empty:
                     st.markdown("**Books by Genre**")
                     st.bar_chart(genre_counts)
 
-            rated = completed[completed["rating"].notna()]
-            if not rated.empty:
-                st.markdown("**Rating Distribution**")
-                rating_dist = rated["rating"].value_counts().sort_index()
-                st.bar_chart(rating_dist)
+            if "year_published" in completed.columns:
+                year_data = completed[completed["year_published"].notna()]
+                if not year_data.empty:
+                    st.markdown("**Books by Decade**")
+                    year_data = year_data.copy()
+                    year_data["decade"] = (year_data["year_published"] // 10 * 10).astype(int).astype(str) + "s"
+                    decade_counts = year_data["decade"].value_counts().sort_index()
+                    st.bar_chart(decade_counts)
+
+                    oldest = year_data.loc[year_data["year_published"].idxmin()]
+                    newest = year_data.loc[year_data["year_published"].idxmax()]
+                    y1, y2 = st.columns(2)
+                    y1.metric("Oldest Read", f"{oldest['title']} ({int(oldest['year_published'])})")
+                    y2.metric("Newest Read", f"{newest['title']} ({int(newest['year_published'])})")
 
             if "total_pages" in completed.columns:
                 pages_data = completed[completed["total_pages"].notna()]
