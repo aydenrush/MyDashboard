@@ -139,21 +139,18 @@ if _has_data:
     view_tab, progress_tab = st.tabs(["Full Schedule", "Progress"])
 
     with view_tab:
-        show_completed = st.checkbox("Show completed only", value=False)
         show_rest = st.checkbox("Show rest days", value=True)
 
         display_df = df.copy()
-        if show_completed:
-            display_df = display_df[display_df["completed"]]
         if not show_rest:
             display_df = display_df[display_df["type"] != "rest"]
 
-        for _, row in display_df.iterrows():
-            color = TYPE_COLORS[row["type"]]
-            is_past = row["date"] < today
-            is_today = row["date"] == today
-            opacity = "0.5" if is_past and not is_today else "1.0"
+        upcoming_df = display_df[display_df["date"] >= today]
+        past_df = display_df[display_df["date"] < today].sort_values("date", ascending=False)
 
+        def render_schedule_row(row):
+            color = TYPE_COLORS[row["type"]]
+            is_today = row["date"] == today
             date_str = row["date"].strftime("%a %m/%d")
             title = row["workout"].split("\n")[0]
             details = "\n".join(row["workout"].split("\n")[1:]).strip()
@@ -162,17 +159,11 @@ if _has_data:
             col_date, col_workout, col_action = st.columns([1.5, 6, 1.5])
             with col_date:
                 label = f"**{date_str}**" if is_today else date_str
-                st.markdown(
-                    f'<span style="opacity:{opacity};">{label}</span>',
-                    unsafe_allow_html=True,
-                )
+                st.markdown(label)
             with col_workout:
                 badge = f'<span style="color:{color}; font-weight:bold; font-size:0.8em;">{TYPE_LABELS[row["type"]].upper()}</span> '
                 text = f"~~{title}~~" if done else title
-                st.markdown(
-                    f'<span style="opacity:{opacity};">{badge}{text}</span>',
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f'{badge}{text}', unsafe_allow_html=True)
                 if details and not done:
                     with st.expander("Details"):
                         st.markdown(details)
@@ -184,14 +175,13 @@ if _has_data:
                 elif done:
                     st.caption("Done")
 
-        with st.expander("Delete Workouts"):
-            for _, row in display_df.iterrows():
-                title = row["workout"].split("\n")[0]
-                delete_button(
-                    "running_schedule", row["id"],
-                    f"{row['date'].strftime('%m/%d')} — {title}",
-                    "run",
-                )
+        for _, row in upcoming_df.iterrows():
+            render_schedule_row(row)
+
+        if not past_df.empty:
+            with st.expander(f"Past Workouts ({len(past_df)})"):
+                for _, row in past_df.iterrows():
+                    render_schedule_row(row)
 
         st.divider()
         export_df = df[["date", "workout", "type", "completed"]].copy()
@@ -281,3 +271,14 @@ with st.expander("Add to Schedule"):
                 insert_rows("running_schedule", rows)
                 st.success(f"Uploaded {len(rows)} days.")
                 st.rerun()
+
+if _has_data:
+    st.divider()
+    with st.expander("Delete Workouts"):
+        for _, row in df.iterrows():
+            title = row["workout"].split("\n")[0]
+            delete_button(
+                "running_schedule", row["id"],
+                f"{row['date'].strftime('%m/%d')} — {title}",
+                "run",
+            )

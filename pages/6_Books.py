@@ -213,7 +213,14 @@ if not df.empty:
         for _, book in df.iterrows():
             mc1, mc2, mc3, mc4 = st.columns([5, 1, 1, 1])
             status_label = STATUS_LABELS.get(book["status"], book["status"])
-            mc1.caption(f"{book['title']} — {status_label}")
+            cap_line = f"{book['title']}"
+            if book.get("author"):
+                cap_line += f" — {book['author']}"
+            yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
+            if yr > 0:
+                cap_line += f" ({yr})"
+            cap_line += f" · {status_label}"
+            mc1.caption(cap_line)
 
             if book["status"] != "reading":
                 if mc2.button("Read", key=f"mgmt_read_{book['id']}"):

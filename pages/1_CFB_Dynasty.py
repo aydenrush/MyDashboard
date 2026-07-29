@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, save_custom_color
+from db import fetch_all, fetch_games, add_game, insert_row, insert_rows, save_custom_color, get_setting, set_setting
 from colors import apply_college_theme, clear_color_cache
 from auth import require_login
 from constants import ROUND_ORDER, age_from_class
@@ -10,11 +10,20 @@ st.set_page_config(page_title="CFB Dynasty", layout="wide")
 require_login()
 
 games = fetch_games("cfb")
-selected_game = st.selectbox("Game", list(games.keys()))
+game_names = list(games.keys())
+
+primary_game = get_setting("primary_cfb")
+default_idx = game_names.index(primary_game) if primary_game and primary_game in game_names else 0
+
+selected_game = st.selectbox("Game", game_names, index=default_idx)
 table = f"{games[selected_game]}_draft_picks"
 
 with st.sidebar:
-    st.subheader("Manage Games")
+    st.subheader("Game Settings")
+    if st.button("Set as Primary Game", key="set_primary_cfb"):
+        set_setting("primary_cfb", selected_game)
+        st.success(f"{selected_game} set as primary.")
+
     with st.expander("Add New CFB Game"):
         new_game_name = st.text_input("Game Name", placeholder="CFB 28", key="new_cfb_name")
         new_game_prefix = st.text_input(
@@ -77,7 +86,6 @@ if _has_picks:
     school_df = df[df["school"] == selected_school].sort_values(["year", "round"])
 
 if _has_picks:
-    # --- Metrics ---
     first_rd = school_df[school_df["round"] == "1st"]
     top_3 = school_df[school_df["round"].isin(["1st", "2nd", "3rd"])]
     years_active = school_df["year"].nunique()
@@ -92,7 +100,6 @@ if _has_picks:
 
     st.divider()
 
-    # --- Filters + Table ---
     filter_col1, filter_col2, filter_col3 = st.columns(3)
     with filter_col1:
         positions = sorted(school_df["position"].dropna().unique())
@@ -140,17 +147,8 @@ if _has_picks:
         key="export_cfb",
     )
 
-    with st.expander("Delete Picks"):
-        for _, row in filtered.iterrows():
-            delete_button(
-                table, row["id"],
-                f"{row['name']} — {row['position']} (Yr {int(row['year'])}, {row['round']})",
-                "pick",
-            )
-
     st.divider()
 
-    # --- Analytics Tabs ---
     tab_year, tab_round, tab_pos, tab_class, tab_measurables = st.tabs(
         ["By Year", "By Round", "By Position", "By Class", "Measurables"]
     )
@@ -281,13 +279,15 @@ if _has_picks:
 st.divider()
 
 # --- Add Data ---
+default_year = int(df["year"].max()) if not df.empty else 2027
+
 add_single, add_bulk = st.tabs(["Add Single Pick", "Bulk Add"])
 
 with add_single:
     with st.form("add_pick"):
         fc1, fc2, fc3 = st.columns(3)
         new_school = fc1.text_input("School", value=selected_school or "")
-        new_year = fc2.number_input("Year", min_value=2024, max_value=2060, value=2027)
+        new_year = fc2.number_input("Year", min_value=2024, max_value=2060, value=default_year)
         new_name = fc3.text_input("Player Name")
         fc4, fc5, fc6 = st.columns(3)
         new_pos = fc4.text_input("Position")
@@ -392,3 +392,14 @@ with add_bulk:
                 st.success(f"Uploaded {len(db_rows)} picks.")
                 st.session_state.pop("bulk_cfb_parsed", None)
                 st.rerun()
+
+# --- Delete (bottom) ---
+if _has_picks:
+    st.divider()
+    with st.expander("Delete Picks"):
+        for _, row in filtered.iterrows():
+            delete_button(
+                table, row["id"],
+                f"{row['name']} — {row['position']} (Yr {int(row['year'])}, {row['round']})",
+                "pick",
+            )

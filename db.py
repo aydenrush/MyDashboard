@@ -85,6 +85,20 @@ def add_game(game_type, display_name, table_prefix):
     }).execute()
 
 
+def set_setting(key, value):
+    get_supabase().table("franchise_config").upsert(
+        {"game": "__settings__", "franchise": key, "primary_team": str(value)},
+        on_conflict="game,franchise",
+    ).execute()
+
+
+def get_setting(key, default=None):
+    rows = get_supabase().table("franchise_config").select("*").eq(
+        "game", "__settings__"
+    ).eq("franchise", key).execute().data
+    return rows[0]["primary_team"] if rows else default
+
+
 def fetch_custom_colors():
     try:
         return get_supabase().table("custom_colors").select("*").execute().data
