@@ -59,6 +59,13 @@ def get_config(game, franchise):
     return rows[0] if rows else None
 
 
+def list_franchises(game):
+    rows = get_supabase().table("franchise_config").select("franchise").eq(
+        "game", game
+    ).execute().data
+    return [r["franchise"] for r in rows]
+
+
 _GAME_DEFAULTS = {
     "cfb": {"CFB 25": "cfb25", "CFB 26": "cfb26", "CFB 27": "cfb27"},
     "madden": {"Madden 24": "m24", "Madden 25": "m25", "Madden 26": "m26"},

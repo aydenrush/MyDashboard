@@ -4,7 +4,8 @@ import streamlit as st
 import pandas as pd
 from db import (
     fetch_all, fetch_games, add_game, insert_row, insert_rows,
-    get_config, upsert_config, save_custom_color, get_setting, set_setting,
+    get_config, upsert_config, list_franchises, save_custom_color,
+    get_setting, set_setting,
 )
 from colors import apply_nfl_theme, get_nfl_colors, clear_color_cache
 from auth import require_login
@@ -46,13 +47,15 @@ wins_df = pd.DataFrame(wins_data)
 
 has_data = not seasons_df.empty
 
-if has_data:
-    franchises = sorted(seasons_df["franchise"].unique())
+config_franchises = list_franchises(prefix)
+data_franchises = list(seasons_df["franchise"].unique()) if has_data else []
+franchises = sorted(set(config_franchises + data_franchises))
+
+if franchises:
     selected_franchise = st.selectbox("Franchise", franchises)
 else:
-    franchises = []
     selected_franchise = None
-    st.info(f"No data loaded for {selected_game} yet. Add data below.")
+    st.info(f"No franchises for {selected_game} yet. Create one in the sidebar.")
 
 
 def team_from_name(name):
@@ -63,7 +66,7 @@ def team_from_name(name):
 
 
 primary_team = None
-if has_data:
+if selected_franchise:
     config = get_config(prefix, selected_franchise)
     primary_team = config["primary_team"] if config else None
     if not primary_team:
@@ -85,7 +88,7 @@ with st.sidebar:
         set_setting("primary_madden", selected_game)
         st.success(f"{selected_game} set as primary.")
 
-    if has_data:
+    if selected_franchise:
         st.subheader("Franchise Settings")
         all_teams = sorted(NFL_COLORS.keys())
         team_options = [f"{abbr} - {NFL_COLORS[abbr][2]}" for abbr in all_teams]
@@ -98,6 +101,21 @@ with st.sidebar:
             upsert_config(prefix, selected_franchise, new_primary)
             st.success(f"Set to {new_primary}")
             st.rerun()
+
+    with st.expander("New Franchise"):
+        all_teams = sorted(NFL_COLORS.keys())
+        team_options = [f"{abbr} - {NFL_COLORS[abbr][2]}" for abbr in all_teams]
+        nf_team = st.selectbox("Pick Your Team", team_options, key="nf_team")
+        nf_abbr = nf_team.split(" - ")[0]
+        nf_display = NFL_COLORS[nf_abbr][2]
+        nf_name = st.text_input("Franchise Name", value=nf_display, key="nf_name")
+        if st.button("Create Franchise", key="create_franchise"):
+            if nf_name.strip():
+                upsert_config(prefix, nf_name.strip(), nf_abbr)
+                st.success(f"Created {nf_name.strip()} ({nf_abbr})")
+                st.rerun()
+            else:
+                st.warning("Enter a franchise name.")
 
     with st.expander("Add New Madden Game"):
         new_game_name = st.text_input("Game Name", placeholder="Madden 27", key="new_mad_name")
@@ -157,7 +175,7 @@ CREATE POLICY "public" ON {p}_all_pro FOR ALL USING (true) WITH CHECK (true);"""
             else:
                 st.warning("Enter a team abbreviation.")
 
-if has_data:
+if selected_franchise and has_data:
     fran_seasons = seasons_df[
         seasons_df["franchise"] == selected_franchise
     ].sort_values("year")
