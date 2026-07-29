@@ -28,22 +28,6 @@ def save_edits(table, edit_df, edited_df, col_mapping):
     st.rerun()
 
 
-def delete_with_confirm(table, row_id, label, key_prefix):
-    confirm_key = f"confirm_del_{key_prefix}_{row_id}"
-    if st.session_state.get(confirm_key):
-        st.warning(f"Delete **{label}**?")
-        yc, nc = st.columns(2)
-        if yc.button("Yes", key=f"yes_{key_prefix}_{row_id}"):
-            delete_row(table, row_id)
-            st.session_state.pop(confirm_key, None)
-            st.rerun()
-        if nc.button("No", key=f"no_{key_prefix}_{row_id}"):
-            st.session_state.pop(confirm_key, None)
-            st.rerun()
-        return True
-    return False
-
-
 def delete_button(table, row_id, label, key_prefix):
     confirm_key = f"confirm_del_{key_prefix}_{row_id}"
     dc1, dc2 = st.columns([6, 1])

@@ -334,6 +334,30 @@ else:
 
 st.divider()
 
+# --- Books ---
+st.subheader("Books")
+try:
+    book_data = fetch_all("books")
+    if book_data:
+        bdf = pd.DataFrame(book_data)
+        reading = bdf[bdf["status"] == "reading"]
+        completed_books = bdf[bdf["status"] == "completed"]
+        b1, b2, b3 = st.columns(3)
+        b1.metric("Reading", len(reading))
+        b2.metric("Completed", len(completed_books))
+        b3.metric("Want to Read", len(bdf[bdf["status"] == "want_to_read"]))
+        for _, book in reading.iterrows():
+            line = f"**{book['title']}**"
+            if book.get("author"):
+                line += f" — {book['author']}"
+            st.caption(line)
+    else:
+        st.info("No books logged yet.")
+except Exception:
+    st.info("No books logged yet.")
+
+st.divider()
+
 # --- Rhymes ---
 st.subheader("Rhymes")
 try:

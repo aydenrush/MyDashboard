@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-from db import fetch_all, insert_rows, update_row, delete_row, get_supabase
+from db import fetch_all, insert_rows, update_row, get_supabase
 from auth import require_login
+from ui_helpers import delete_button
 
 st.set_page_config(page_title="Running Schedule", layout="wide")
 require_login()
@@ -185,24 +186,11 @@ if _has_data:
         with st.expander("Delete Workouts"):
             for _, row in display_df.iterrows():
                 title = row["workout"].split("\n")[0]
-                dc1, dc2 = st.columns([6, 1])
-                dc1.caption(f"{row['date'].strftime('%m/%d')} — {title}")
-                ck = f"confirm_del_run_{row['id']}"
-                if st.session_state.get(ck):
-                    with dc2:
-                        st.warning("Sure?")
-                        yc, nc = st.columns(2)
-                        if yc.button("Yes", key=f"yes_run_{row['id']}"):
-                            delete_row("running_schedule", row["id"])
-                            st.session_state.pop(ck, None)
-                            st.rerun()
-                        if nc.button("No", key=f"no_run_{row['id']}"):
-                            st.session_state.pop(ck, None)
-                            st.rerun()
-                else:
-                    if dc2.button("Delete", key=f"del_run_{row['id']}"):
-                        st.session_state[ck] = True
-                        st.rerun()
+                delete_button(
+                    "running_schedule", row["id"],
+                    f"{row['date'].strftime('%m/%d')} — {title}",
+                    "run",
+                )
 
         st.divider()
         export_df = df[["date", "workout", "type", "completed"]].copy()
