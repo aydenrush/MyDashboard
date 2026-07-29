@@ -345,7 +345,7 @@ with records_tab:
 
 
 # --- All-Pro Formation Renderer ---
-def render_player_card(pos, player_data):
+def render_player_card(pos, player_data, colors):
     name = player_data.get("name", "—") if player_data else "—"
     team = player_data.get("team", "") if player_data else ""
     ovr = player_data.get("ovr") if player_data else None
@@ -358,27 +358,48 @@ def render_player_card(pos, player_data):
         info_parts.append(f"{ovr}")
     info_line = " · ".join(info_parts)
 
-    opacity = "0.35" if not player_data else "1"
+    if player_data and team and team in colors:
+        bg = colors[team][0]
+        accent = colors[team][1]
+        border = accent
+        bg_style = f"background:{bg};border:2px solid {border};"
+        pos_color = accent
+        name_color = "#fff"
+        info_color = "rgba(255,255,255,0.7)"
+        opacity = "1"
+    elif player_data:
+        bg_style = "background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.15);"
+        pos_color = "#FFD700"
+        name_color = "#fff"
+        info_color = "rgba(255,255,255,0.65)"
+        opacity = "1"
+    else:
+        bg_style = "background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.15);"
+        pos_color = "#FFD700"
+        name_color = "#fff"
+        info_color = "rgba(255,255,255,0.65)"
+        opacity = "0.35"
+
     return (
-        f'<div style="background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.15);'
+        f'<div style="{bg_style}'
         f'border-radius:8px;padding:6px 10px;text-align:center;min-width:68px;opacity:{opacity};">'
-        f'<div style="font-size:0.6em;font-weight:700;color:#FFD700;letter-spacing:1px;">{display_pos}</div>'
-        f'<div style="font-size:0.78em;font-weight:600;color:#fff;white-space:nowrap;">{name}</div>'
-        + (f'<div style="font-size:0.6em;color:rgba(255,255,255,0.65);">{info_line}</div>' if info_line else "")
+        f'<div style="font-size:0.6em;font-weight:700;color:{pos_color};letter-spacing:1px;">{display_pos}</div>'
+        f'<div style="font-size:0.78em;font-weight:600;color:{name_color};white-space:nowrap;">{name}</div>'
+        + (f'<div style="font-size:0.6em;color:{info_color};">{info_line}</div>' if info_line else "")
         + '</div>'
     )
 
 
-def render_formation_row(positions, players, spread=False):
+def render_formation_row(positions, players, colors, spread=False):
     justify = "space-between" if spread else "center"
-    cards = "".join(render_player_card(p, players.get(p)) for p in positions)
+    cards = "".join(render_player_card(p, players.get(p), colors) for p in positions)
     return (
         f'<div style="display:flex;justify-content:{justify};gap:8px;flex-wrap:wrap;'
         f'margin:6px 0;padding:0 {"30px" if spread else "10px"};">{cards}</div>'
     )
 
 
-def render_all_pro_formation(year_data):
+def render_all_pro_formation(year_data, colors):
     players = {}
     for _, row in year_data.iterrows():
         pos = row["position_label"]
@@ -396,22 +417,22 @@ def render_all_pro_formation(year_data):
     )
 
     html += '<div style="text-align:center;color:rgba(255,255,255,0.5);font-weight:700;font-size:0.7em;letter-spacing:2px;margin-bottom:6px;">OFFENSE</div>'
-    html += render_formation_row(["WR 1st", "WR 2nd"], players, spread=True)
-    html += render_formation_row(["OT 1st", "OG 1st", "C 1st", "OG 2nd", "OT 2nd", "TE 1st"], players)
-    html += render_formation_row(["QB 1st"], players)
-    html += render_formation_row(["RB 1st", "FB 1st"], players)
+    html += render_formation_row(["WR 1st", "WR 2nd"], players, colors, spread=True)
+    html += render_formation_row(["OT 1st", "OG 1st", "C 1st", "OG 2nd", "OT 2nd", "TE 1st"], players, colors)
+    html += render_formation_row(["QB 1st"], players, colors)
+    html += render_formation_row(["RB 1st", "FB 1st"], players, colors)
 
     html += '<hr style="border-color:rgba(255,255,255,0.15);margin:12px 0;">'
 
     html += '<div style="text-align:center;color:rgba(255,255,255,0.5);font-weight:700;font-size:0.7em;letter-spacing:2px;margin-bottom:6px;">DEFENSE</div>'
-    html += render_formation_row(["EDGE 1st", "DT 1st", "DT 2nd", "EDGE 2nd"], players)
-    html += render_formation_row(["SAM 1st", "MIKE 1st", "WILL 1st"], players)
-    html += render_formation_row(["CB 1st", "S 1st", "S 2nd", "CB 2nd"], players, spread=True)
+    html += render_formation_row(["EDGE 1st", "DT 1st", "DT 2nd", "EDGE 2nd"], players, colors)
+    html += render_formation_row(["SAM 1st", "MIKE 1st", "WILL 1st"], players, colors)
+    html += render_formation_row(["CB 1st", "S 1st", "S 2nd", "CB 2nd"], players, colors, spread=True)
 
     html += '<hr style="border-color:rgba(255,255,255,0.15);margin:12px 0;">'
 
     html += '<div style="text-align:center;color:rgba(255,255,255,0.5);font-weight:700;font-size:0.7em;letter-spacing:2px;margin-bottom:6px;">SPECIAL TEAMS</div>'
-    html += render_formation_row(["K 1st", "P 1st", "KR 1st", "PR 1st", "LS 1st"], players)
+    html += render_formation_row(["K 1st", "P 1st", "KR 1st", "PR 1st", "LS 1st"], players, colors)
 
     html += '</div>'
     return html
@@ -464,7 +485,7 @@ with allpro_tab:
         )
         year_ap = allpro_df[allpro_df["year"] == sel_ap_year].copy()
 
-        st.markdown(render_all_pro_formation(year_ap), unsafe_allow_html=True)
+        st.markdown(render_all_pro_formation(year_ap, NFL_COLORS), unsafe_allow_html=True)
 
         with st.expander("Full Depth Chart"):
             st.markdown(render_depth_chart(year_ap), unsafe_allow_html=True)
