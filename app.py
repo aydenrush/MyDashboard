@@ -451,21 +451,36 @@ with st.expander("Sync to phone"):
                     "END:VEVENT",
                 ])
 
+        def ical_fold(line):
+            """Fold long lines per RFC 5545 (max 75 octets)."""
+            result = []
+            while len(line.encode("utf-8")) > 75:
+                cut = 75
+                while cut > 0 and len(line[:cut].encode("utf-8")) > 75:
+                    cut -= 1
+                result.append(line[:cut])
+                line = " " + line[cut:]
+            result.append(line)
+            return "\r\n".join(result)
+
+        def ical_escape(text):
+            return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
         if not running_df.empty:
             for _, run in running_df.iterrows():
                 workout = run["workout"]
                 if not isinstance(workout, str) or not workout.strip():
                     continue
                 title = workout.split("\n")[0]
-                details = workout.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+                details = ical_escape(workout)
                 d = run["date"].strftime("%Y%m%d")
                 event = [
                     "BEGIN:VEVENT",
                     f"UID:run-{run['id']}@mydashboard",
                     f"DTSTART:{d}T063000",
                     f"DTEND:{d}T073000",
-                    f"SUMMARY:Running: {title}",
-                    f"DESCRIPTION:{details}",
+                    ical_fold(f"SUMMARY:Running: {title}"),
+                    ical_fold(f"DESCRIPTION:{details}"),
                     "END:VEVENT",
                 ]
                 lines.extend(event)
