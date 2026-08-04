@@ -457,15 +457,18 @@ with st.expander("Sync to phone"):
                 if not isinstance(workout, str) or not workout.strip():
                     continue
                 title = workout.split("\n")[0]
+                details = workout.replace("\n", "\\n")
                 d = run["date"].strftime("%Y%m%d")
-                lines.extend([
+                event = [
                     "BEGIN:VEVENT",
                     f"UID:run-{run['id']}@mydashboard",
                     f"DTSTART:{d}T063000",
                     f"DTEND:{d}T073000",
                     f"SUMMARY:Running: {title}",
+                    f"DESCRIPTION:{details}",
                     "END:VEVENT",
-                ])
+                ]
+                lines.extend(event)
 
         lines.append("END:VCALENDAR")
         return "\r\n".join(lines)
