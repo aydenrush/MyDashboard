@@ -457,7 +457,7 @@ with st.expander("Sync to phone"):
                 if not isinstance(workout, str) or not workout.strip():
                     continue
                 title = workout.split("\n")[0]
-                details = workout.replace("\n", "\\n")
+                details = workout.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
                 d = run["date"].strftime("%Y%m%d")
                 event = [
                     "BEGIN:VEVENT",
