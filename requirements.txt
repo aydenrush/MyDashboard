@@ -3,3 +3,4 @@ supabase>=2.0.0
 pandas>=2.0.0
 icalendar>=5.0.0
 recurring-ical-events>=2.1.0
+starlette<0.47
