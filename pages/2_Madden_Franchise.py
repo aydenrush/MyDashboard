@@ -179,9 +179,14 @@ CREATE POLICY "public" ON {p}_all_pro FOR ALL USING (true) WITH CHECK (true);"""
 has_wins = not wins_df.empty and selected_franchise and selected_franchise in wins_df["franchise"].values
 
 if selected_franchise and (has_data or has_wins):
-    fran_seasons = seasons_df[
-        seasons_df["franchise"] == selected_franchise
-    ].sort_values("year")
+    fran_seasons = (
+        seasons_df[seasons_df["franchise"] == selected_franchise].sort_values("year")
+        if has_data
+        else pd.DataFrame(columns=[
+            "id", "year", "franchise", "sb_winner", "sb_mvp", "nfl_mvp",
+            "coach_of_year", "opoy", "dpoy", "oroy", "droy", "ninety_nine_club",
+        ])
+    )
     fran_wins = (
         wins_df[wins_df["franchise"] == selected_franchise].sort_values("year")
         if not wins_df.empty
