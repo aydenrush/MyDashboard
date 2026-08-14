@@ -49,7 +49,8 @@ has_data = not seasons_df.empty
 
 config_franchises = list_franchises(prefix)
 data_franchises = list(seasons_df["franchise"].unique()) if has_data else []
-franchises = sorted(set(config_franchises + data_franchises))
+wins_franchises = list(wins_df["franchise"].unique()) if not wins_df.empty else []
+franchises = sorted(set(config_franchises + data_franchises + wins_franchises))
 
 if franchises:
     selected_franchise = st.selectbox("Franchise", franchises)
@@ -175,7 +176,9 @@ CREATE POLICY "public" ON {p}_all_pro FOR ALL USING (true) WITH CHECK (true);"""
             else:
                 st.warning("Enter a team abbreviation.")
 
-if selected_franchise and has_data:
+has_wins = not wins_df.empty and selected_franchise and selected_franchise in wins_df["franchise"].values
+
+if selected_franchise and (has_data or has_wins):
     fran_seasons = seasons_df[
         seasons_df["franchise"] == selected_franchise
     ].sort_values("year")
@@ -1324,7 +1327,7 @@ with add_allpro:
                     st.rerun()
 
 # --- Delete Zone (bottom) ---
-if has_data:
+if has_data or has_wins:
     st.divider()
     with st.expander("Delete Data"):
         del_tab1, del_tab2, del_tab3 = st.tabs(["Seasons", "Win Records", "All-Pro"])
