@@ -361,15 +361,27 @@ with records_tab:
                     if not div_rows.empty:
                         st.markdown(f"**{div_name}**")
                         for _, dr in div_rows.iterrows():
-                            name = NFL_COLORS[dr["team"]][2] if dr["team"] in NFL_COLORS else dr["team"]
-                            st.caption(f"{name} ({dr['team']}): {dr['wins']:.0f}W")
+                            abbr = dr["team"]
+                            name = NFL_COLORS[abbr][2] if abbr in NFL_COLORS else abbr
+                            color = NFL_COLORS[abbr][0] if abbr in NFL_COLORS else "#888"
+                            st.markdown(
+                                f'<span style="color:{color};font-weight:600;">{name}</span>'
+                                f' <span style="opacity:0.6;font-size:0.85em;">({abbr}): {dr["wins"]:.0f}W</span>',
+                                unsafe_allow_html=True,
+                            )
 
             custom_teams = div_data[~div_data["team"].isin(ALL_DIV_TEAMS)]
             if not custom_teams.empty:
                 st.markdown("**Custom / Relocated**")
                 for _, cr in custom_teams.sort_values("wins", ascending=False).iterrows():
-                    name = NFL_COLORS[cr["team"]][2] if cr["team"] in NFL_COLORS else cr["team"]
-                    st.caption(f"{name} ({cr['team']}): {cr['wins']:.0f}W")
+                    abbr = cr["team"]
+                    name = NFL_COLORS[abbr][2] if abbr in NFL_COLORS else abbr
+                    color = NFL_COLORS[abbr][0] if abbr in NFL_COLORS else "#888"
+                    st.markdown(
+                        f'<span style="color:{color};font-weight:600;">{name}</span>'
+                        f' <span style="opacity:0.6;font-size:0.85em;">({abbr}): {cr["wins"]:.0f}W</span>',
+                        unsafe_allow_html=True,
+                    )
 
 
 def parse_player_string(text, colors):
