@@ -59,6 +59,23 @@ else:
     st.info(f"No franchises for {selected_game} yet. Create one in the sidebar.")
 
 
+def _hex_luminance(hex_color):
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _team_label_color(abbr, colors):
+    if abbr not in colors:
+        return "#888"
+    primary, secondary, _ = colors[abbr]
+    if _hex_luminance(primary) > 60:
+        return primary
+    if _hex_luminance(secondary) > 60:
+        return secondary
+    return "#aaa"
+
+
 def team_from_name(name):
     for abbr, (_, _, display) in NFL_COLORS.items():
         if display.lower() == name.lower():
@@ -363,7 +380,7 @@ with records_tab:
                         for _, dr in div_rows.iterrows():
                             abbr = dr["team"]
                             name = NFL_COLORS[abbr][2] if abbr in NFL_COLORS else abbr
-                            color = NFL_COLORS[abbr][0] if abbr in NFL_COLORS else "#888"
+                            color = _team_label_color(abbr, NFL_COLORS)
                             st.markdown(
                                 f'<span style="color:{color};font-weight:600;">{name}</span>'
                                 f' <span style="opacity:0.6;font-size:0.85em;">({abbr}): {dr["wins"]:.0f}W</span>',
@@ -376,7 +393,7 @@ with records_tab:
                 for _, cr in custom_teams.sort_values("wins", ascending=False).iterrows():
                     abbr = cr["team"]
                     name = NFL_COLORS[abbr][2] if abbr in NFL_COLORS else abbr
-                    color = NFL_COLORS[abbr][0] if abbr in NFL_COLORS else "#888"
+                    color = _team_label_color(abbr, NFL_COLORS)
                     st.markdown(
                         f'<span style="color:{color};font-weight:600;">{name}</span>'
                         f' <span style="opacity:0.6;font-size:0.85em;">({abbr}): {cr["wins"]:.0f}W</span>',
