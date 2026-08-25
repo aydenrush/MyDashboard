@@ -7,8 +7,6 @@ from ui_helpers import save_edits
 st.set_page_config(page_title="Minecraft", layout="wide")
 require_login()
 
-st.title("Minecraft")
-
 TABLE = "minecraft_coords"
 SEED = "7338286372832099621"
 CHUNKBASE_URL = "https://www.chunkbase.com/apps/seed-map#seed=7338286372832099621&platform=bedrock_26_0&dimension=overworld&x=895&z=-7&zoom=0.927"
@@ -18,10 +16,6 @@ try:
 except Exception:
     data = []
 df = pd.DataFrame(data)
-
-st.caption(f"World Seed: `{SEED}`")
-
-st.divider()
 
 # --- Coordinates ---
 coords_df = df[df["label"] != "__seed__"] if not df.empty else pd.DataFrame()
@@ -142,6 +136,7 @@ with st.form("add_coord"):
 
 st.divider()
 
+st.caption(f"World Seed: `{SEED}`")
 st.markdown(
     f'<a href="{CHUNKBASE_URL}" target="_blank" style="'
     'display:inline-flex;align-items:center;gap:8px;'
