@@ -93,7 +93,11 @@ else:
             card_col.markdown(
                 f'<div class="mc-card" style="border-color:{color};background:{bg};">'
                 f'<span class="mc-label" style="color:{color};">{icon} {row["label"]}</span>'
-                f'<span class="mc-coords">X: {row["x"]}  Z: {row["z"]}</span>'
+                f'<span class="mc-coords">'
+                f'X: <span style="color:{"#ef5350" if str(row["x"]).startswith("-") else "inherit"}">{row["x"]}</span>'
+                f'&nbsp;&nbsp;'
+                f'Z: <span style="color:{"#ef5350" if str(row["z"]).startswith("-") else "inherit"}">{row["z"]}</span>'
+                f'</span>'
                 f'<span class="mc-dim">{dim.title()}</span>'
                 f'<span class="mc-convert">{convert}</span>'
                 f'</div>',
