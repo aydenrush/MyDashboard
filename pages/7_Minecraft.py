@@ -10,6 +10,8 @@ require_login()
 st.title("Minecraft")
 
 TABLE = "minecraft_coords"
+SEED = "7338286372832099621"
+CHUNKBASE_URL = "https://www.chunkbase.com/apps/seed-map#seed=7338286372832099621&platform=bedrock_26_0&dimension=overworld&x=895&z=-7&zoom=0.927"
 
 try:
     data = fetch_all(TABLE, order_col="created_at")
@@ -17,23 +19,7 @@ except Exception:
     data = []
 df = pd.DataFrame(data)
 
-# --- World Seed ---
-seed_rows = df[df["label"] == "__seed__"] if not df.empty else pd.DataFrame()
-current_seed = seed_rows.iloc[0]["x"] if not seed_rows.empty else ""
-
-with st.expander("World Seed", expanded=bool(current_seed)):
-    if current_seed:
-        st.code(current_seed, language=None)
-    with st.form("seed_form"):
-        new_seed = st.text_input("Seed", value=current_seed)
-        if st.form_submit_button("Save Seed"):
-            if seed_rows.empty:
-                insert_row(TABLE, {"label": "__seed__", "x": new_seed.strip(), "z": "", "dimension": ""})
-            else:
-                update_row(TABLE, int(seed_rows.iloc[0]["id"]), {"x": new_seed.strip()})
-            st.rerun()
-
-st.link_button("Open Seed Map (Chunkbase)", "https://www.chunkbase.com/apps/seed-map#seed=7338286372832099621&platform=bedrock_26_0&dimension=overworld&x=895&z=-7&zoom=0.927")
+st.caption(f"World Seed: `{SEED}`")
 
 st.divider()
 
@@ -153,3 +139,18 @@ with st.form("add_coord"):
             st.rerun()
         else:
             st.error("Label is required.")
+
+st.divider()
+
+st.markdown(
+    f'<a href="{CHUNKBASE_URL}" target="_blank" style="'
+    'display:inline-flex;align-items:center;gap:8px;'
+    'background:linear-gradient(135deg,#2d7d32,#66bb6a);'
+    'color:white;padding:10px 24px;border-radius:8px;'
+    'text-decoration:none;font-weight:600;font-size:0.95rem;'
+    'transition:opacity 0.2s;'
+    '">'
+    '\U0001F5FA Open Seed Map on Chunkbase'
+    '</a>',
+    unsafe_allow_html=True,
+)
