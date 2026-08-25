@@ -6,3 +6,4 @@ venv/
 .venv/
 *.sql
 *.claude/launch.json
+supabase/.temp/

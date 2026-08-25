@@ -50,14 +50,22 @@ else:
     for _, row in coords_df.iterrows():
         dim = (row.get("dimension") or "overworld").lower()
         color = DIM_COLORS.get(dim, "#888")
-        c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+        c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
         c1.markdown(
             f'<span style="color:{color};font-weight:600;">{row["label"]}</span>',
             unsafe_allow_html=True,
         )
         c2.caption(f"X: {row['x']}  Z: {row['z']}")
         c3.caption(dim.title())
-        if c4.button("X", key=f"del_{row['id']}"):
+        try:
+            ix, iz = int(float(row["x"])), int(float(row["z"]))
+            if dim == "nether":
+                c4.caption(f"OW: {ix * 8}, {iz * 8}")
+            elif dim == "overworld":
+                c4.caption(f"Nether: {round(ix / 8)}, {round(iz / 8)}")
+        except (ValueError, TypeError):
+            pass
+        if c5.button("X", key=f"del_{row['id']}"):
             delete_row(TABLE, row["id"])
             st.rerun()
 
