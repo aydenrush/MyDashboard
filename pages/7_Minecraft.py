@@ -82,9 +82,18 @@ else:
             try:
                 ix, iz = int(float(row["x"])), int(float(row["z"]))
                 if dim == "nether":
-                    convert = f"Overworld: ~{ix * 8}, ~{iz * 8}"
+                    cx, cz = ix * 8, iz * 8
+                    label_dim = "Overworld"
                 elif dim == "overworld":
-                    convert = f"Nether: ~{round(ix / 8)}, ~{round(iz / 8)}"
+                    cx, cz = round(ix / 8), round(iz / 8)
+                    label_dim = "Nether"
+                else:
+                    cx, cz, label_dim = None, None, None
+                if label_dim:
+                    neg = "#ef5350"
+                    sx = f'<span style="color:{neg}">~{cx}</span>' if cx < 0 else f"~{cx}"
+                    sz = f'<span style="color:{neg}">~{cz}</span>' if cz < 0 else f"~{cz}"
+                    convert = f"{label_dim}: {sx}, {sz}"
             except (ValueError, TypeError):
                 pass
 
