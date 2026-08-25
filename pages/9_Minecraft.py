@@ -3,7 +3,6 @@ import pandas as pd
 from db import fetch_all, insert_row, delete_row, update_row
 from auth import require_login
 from ui_helpers import save_edits
-from mc_biomes import get_biome, find_nearest_biome, list_biomes
 
 st.set_page_config(page_title="Minecraft", layout="wide")
 require_login()
@@ -35,47 +34,6 @@ with st.expander("World Seed", expanded=bool(current_seed)):
             st.rerun()
 
 st.link_button("Open Seed Map (Chunkbase)", "https://www.chunkbase.com/apps/seed-map#seed=7338286372832099621&platform=bedrock_26_0&dimension=overworld&x=895&z=-7&zoom=0.927")
-
-st.divider()
-
-# --- Biome Finder ---
-st.subheader("Biome Finder")
-st.caption("Find the nearest biome from any coordinate")
-
-bf1, bf2, bf3 = st.columns([3, 2, 2])
-target_biome = bf1.selectbox("Find biome", list_biomes())
-start_x = bf2.number_input("From X", value=0, step=100)
-start_z = bf3.number_input("From Z", value=0, step=100)
-
-bc1, bc2 = st.columns([1, 3])
-search_radius = bc1.select_slider("Search radius", [2000, 5000, 10000, 20000], value=5000)
-
-if bc2.button("Search", type="primary"):
-    with st.spinner(f"Searching for {target_biome}..."):
-        result = find_nearest_biome(target_biome, start_x, start_z, max_radius=search_radius, step=64)
-    if result:
-        x, z, dist = result
-        st.success(f"**{target_biome}** found at **X: {x}  Z: {z}** — {dist:.0f} blocks away")
-        if st.button(f"Save this coordinate", key="save_biome_result"):
-            insert_row(TABLE, {
-                "label": target_biome,
-                "x": str(x),
-                "z": str(z),
-                "dimension": "overworld",
-            })
-            st.rerun()
-    else:
-        st.warning(f"No {target_biome} found within {search_radius} blocks.")
-
-with st.expander("What biome is here?"):
-    wh1, wh2 = st.columns(2)
-    check_x = wh1.number_input("X", value=0, step=100, key="check_x")
-    check_z = wh2.number_input("Z", value=0, step=100, key="check_z")
-    if st.button("Check"):
-        biome = get_biome(check_x, check_z)
-        st.info(f"**{biome}** at X: {check_x}  Z: {check_z}")
-
-st.caption("Results are approximate — noise parameters are estimated, not exact Bedrock values.")
 
 st.divider()
 
