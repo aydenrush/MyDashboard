@@ -88,7 +88,8 @@ else:
             except (ValueError, TypeError):
                 pass
 
-            card_col, btn_col = st.columns([12, 1])
+            can_convert = dim in ("overworld", "nether")
+            card_col, *action_cols = st.columns([12, 1, 1] if can_convert else [12, 1])
             card_col.markdown(
                 f'<div class="mc-card" style="border-color:{color};background:{bg};">'
                 f'<span class="mc-label" style="color:{color};">{icon} {row["label"]}</span>'
@@ -98,7 +99,26 @@ else:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            if btn_col.button("\U0001F5D1", key=f"del_{row['id']}"):
+            col_idx = 0
+            if can_convert:
+                target = "nether" if dim == "overworld" else "overworld"
+                tip = f"Copy to {target.title()}"
+                if action_cols[col_idx].button(DIM_ICONS[target], key=f"conv_{row['id']}", help=tip):
+                    try:
+                        ix, iz = int(float(row["x"])), int(float(row["z"]))
+                        nx = round(ix / 8) if dim == "overworld" else ix * 8
+                        nz = round(iz / 8) if dim == "overworld" else iz * 8
+                        insert_row(TABLE, {
+                            "label": row["label"],
+                            "x": str(nx),
+                            "z": str(nz),
+                            "dimension": target,
+                        })
+                        st.rerun()
+                    except (ValueError, TypeError):
+                        st.error("Cannot convert — invalid coordinates.")
+                col_idx += 1
+            if action_cols[col_idx].button("\U0001F5D1", key=f"del_{row['id']}"):
                 delete_row(TABLE, row["id"])
                 st.rerun()
 
