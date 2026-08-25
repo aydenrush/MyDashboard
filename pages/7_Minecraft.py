@@ -41,33 +41,86 @@ st.divider()
 coords_df = df[df["label"] != "__seed__"] if not df.empty else pd.DataFrame()
 
 DIM_COLORS = {"overworld": "#4CAF50", "nether": "#F44336", "end": "#9C27B0"}
+DIM_BG = {"overworld": "rgba(76,175,80,0.08)", "nether": "rgba(244,67,54,0.08)", "end": "rgba(156,39,176,0.08)"}
+DIM_ICONS = {"overworld": "\U0001F333", "nether": "\U0001F525", "end": "⭐"}
 
 st.subheader("Important Coordinates")
 
 if coords_df.empty:
     st.info("No coordinates saved yet. Add one below.")
 else:
-    for _, row in coords_df.iterrows():
-        dim = (row.get("dimension") or "overworld").lower()
-        color = DIM_COLORS.get(dim, "#888")
-        c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
-        c1.markdown(
-            f'<span style="color:{color};font-weight:600;">{row["label"]}</span>',
-            unsafe_allow_html=True,
-        )
-        c2.caption(f"X: {row['x']}  Z: {row['z']}")
-        c3.caption(dim.title())
-        try:
-            ix, iz = int(float(row["x"])), int(float(row["z"]))
-            if dim == "nether":
-                c4.caption(f"Overworld: ~{ix * 8}, ~{iz * 8}")
-            elif dim == "overworld":
-                c4.caption(f"Nether: ~{round(ix / 8)}, ~{round(iz / 8)}")
-        except (ValueError, TypeError):
-            pass
-        if c5.button("X", key=f"del_{row['id']}"):
-            delete_row(TABLE, row["id"])
-            st.rerun()
+    st.markdown("""
+    <style>
+    .mc-card {
+        border-left: 4px solid;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .mc-card .mc-label {
+        font-size: 1.1rem;
+        font-weight: 700;
+        min-width: 140px;
+    }
+    .mc-card .mc-coords {
+        font-family: 'Courier New', monospace;
+        font-size: 0.95rem;
+        opacity: 0.9;
+        min-width: 120px;
+    }
+    .mc-card .mc-dim {
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.7;
+        min-width: 90px;
+    }
+    .mc-card .mc-convert {
+        font-size: 0.8rem;
+        opacity: 0.5;
+        font-style: italic;
+        min-width: 140px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    for dim_name in ["overworld", "nether", "end"]:
+        dim_rows = coords_df[coords_df["dimension"].str.lower() == dim_name] if not coords_df.empty else pd.DataFrame()
+        if dim_rows.empty:
+            continue
+        for _, row in dim_rows.iterrows():
+            dim = dim_name
+            color = DIM_COLORS[dim]
+            bg = DIM_BG[dim]
+            icon = DIM_ICONS[dim]
+
+            convert = ""
+            try:
+                ix, iz = int(float(row["x"])), int(float(row["z"]))
+                if dim == "nether":
+                    convert = f"Overworld: ~{ix * 8}, ~{iz * 8}"
+                elif dim == "overworld":
+                    convert = f"Nether: ~{round(ix / 8)}, ~{round(iz / 8)}"
+            except (ValueError, TypeError):
+                pass
+
+            card_col, btn_col = st.columns([12, 1])
+            card_col.markdown(
+                f'<div class="mc-card" style="border-color:{color};background:{bg};">'
+                f'<span class="mc-label" style="color:{color};">{icon} {row["label"]}</span>'
+                f'<span class="mc-coords">X: {row["x"]}  Z: {row["z"]}</span>'
+                f'<span class="mc-dim">{dim.title()}</span>'
+                f'<span class="mc-convert">{convert}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if btn_col.button("\U0001F5D1", key=f"del_{row['id']}"):
+                delete_row(TABLE, row["id"])
+                st.rerun()
 
     with st.expander("Edit Coordinates"):
         edit_df = coords_df[["id", "label", "x", "z", "dimension"]].copy()
