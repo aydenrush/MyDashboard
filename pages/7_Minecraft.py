@@ -60,9 +60,9 @@ else:
         try:
             ix, iz = int(float(row["x"])), int(float(row["z"]))
             if dim == "nether":
-                c4.caption(f"OW: {ix * 8}, {iz * 8}")
+                c4.caption(f"Overworld: ~{ix * 8}, ~{iz * 8}")
             elif dim == "overworld":
-                c4.caption(f"Nether: {round(ix / 8)}, {round(iz / 8)}")
+                c4.caption(f"Nether: ~{round(ix / 8)}, ~{round(iz / 8)}")
         except (ValueError, TypeError):
             pass
         if c5.button("X", key=f"del_{row['id']}"):
