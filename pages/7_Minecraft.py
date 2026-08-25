@@ -136,16 +136,17 @@ with st.form("add_coord"):
 
 st.divider()
 
-st.caption(f"World Seed: `{SEED}`")
 st.markdown(
+    f'<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'
+    f'<span style="opacity:0.6;font-size:0.85rem;">Seed: <code>{SEED}</code></span>'
     f'<a href="{CHUNKBASE_URL}" target="_blank" style="'
-    'display:inline-flex;align-items:center;gap:8px;'
+    'display:inline-flex;align-items:center;gap:6px;'
     'background:linear-gradient(135deg,#2d7d32,#66bb6a);'
-    'color:white;padding:10px 24px;border-radius:8px;'
-    'text-decoration:none;font-weight:600;font-size:0.95rem;'
-    'transition:opacity 0.2s;'
+    'color:white;padding:6px 16px;border-radius:6px;'
+    'text-decoration:none;font-weight:600;font-size:0.85rem;'
     '">'
-    '\U0001F5FA Open Seed Map on Chunkbase'
-    '</a>',
+    '\U0001F5FA Chunkbase'
+    '</a>'
+    '</div>',
     unsafe_allow_html=True,
 )
