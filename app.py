@@ -151,7 +151,9 @@ def render_day_column(col, i, day, clickable=True):
             header = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
             st.markdown(header)
 
-        day_cal = [e for e in cal_events if e["date"] == day_str]
+        class_keywords = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
+        day_cal = [e for e in cal_events if e["date"] == day_str
+                   and not any(kw in e["title"] for kw in class_keywords)]
         for event in sorted(day_cal, key=lambda e: e["start_time"]):
             time_label = event["start_time"]
             if event["end_time"]:
@@ -202,9 +204,10 @@ def render_day_column(col, i, day, clickable=True):
                 atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
                 label_text, color = atype
                 done = act.get("completed", False)
-                title = act.get("title") or label_text
+                raw_title = act.get("title")
+                title = raw_title if isinstance(raw_title, str) and raw_title.strip() else label_text
                 slot = act.get("time_slot", "")
-                time_str = TIME_DISPLAY.get(slot, slot) if slot else ""
+                time_str = TIME_DISPLAY.get(slot, slot) if isinstance(slot, str) and slot else ""
                 st.markdown(
                     f'<div style="border-left: 3px solid {color}; padding: 4px 6px; '
                     f'margin: 2px 0; border-radius: 3px; font-size: 0.75em; '
@@ -253,7 +256,9 @@ if focus_str != today.isoformat():
         st.session_state["focus_day"] = today.isoformat()
         st.rerun()
 
-focus_cal = [e for e in cal_events if e["date"] == focus_str]
+class_kw = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
+focus_cal = [e for e in cal_events if e["date"] == focus_str
+             and not any(kw in e["title"] for kw in class_kw)]
 focus_classes = [cls for cls in SCHOOL_SCHEDULE
                  if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
                  and focus_date.weekday() in cls["days"]]
@@ -289,9 +294,10 @@ else:
     for _, act in focus_acts.iterrows():
         atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
         label_text, _ = atype
-        title = act.get("title") or label_text
+        raw_title = act.get("title")
+        title = raw_title if isinstance(raw_title, str) and raw_title.strip() else label_text
         slot = act.get("time_slot", "")
-        time_str = TIME_DISPLAY.get(slot, slot) if slot else ""
+        time_str = TIME_DISPLAY.get(slot, slot) if isinstance(slot, str) and slot else ""
         ac1, ac2 = st.columns([6, 1])
         if act.get("completed"):
             ac1.markdown(f"~~{time_str + ' · ' if time_str else ''}{label_text}: {title}~~ — Done")
@@ -346,7 +352,8 @@ if not activities_df.empty:
             for _, act in week_acts.iterrows():
                 atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
                 label_text, color = atype
-                title = act.get("title") or label_text
+                raw_title = act.get("title")
+                title = raw_title if isinstance(raw_title, str) and raw_title.strip() else label_text
                 day_label = datetime.strptime(act["date"], "%Y-%m-%d").strftime("%a %m/%d")
 
                 mc1, mc2, mc3 = st.columns([5, 1, 1])
