@@ -6,7 +6,7 @@ import urllib.request
 from db import fetch_all, fetch_games, insert_row, delete_row, update_row
 from auth import require_login
 from colors import get_nfl_colors
-from constants import ROUND_ORDER, AWARD_COLS
+from constants import ROUND_ORDER, AWARD_COLS, ACTIVITY_TYPES, TIME_SLOTS, TIME_DISPLAY
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 require_login()
@@ -17,18 +17,6 @@ st.link_button("Ayden Music", "https://aydenmusic.streamlit.app")
 NFL_COLORS = get_nfl_colors()
 
 today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
-
-ACTIVITY_TYPES = {
-    "running": ("Running", "#F44336"),
-    "lifting": ("Lifting", "#FF9800"),
-    "cycling": ("Cycling", "#4CAF50"),
-    "frisbee_golf": ("Frisbee Golf", "#2196F3"),
-    "rap_writing": ("Rap Writing", "#9C27B0"),
-    "other": ("Other", "#607D8B"),
-}
-
-TIME_SLOTS = ["Morning", "Midday", "Afternoon", "Evening"]
-TIME_DISPLAY = {"Morning": "8 AM", "Midday": "11 AM", "Afternoon": "2 PM", "Evening": "5:30 PM"}
 
 SCHOOL_SCHEDULE = [
     {"name": "CS 25000 Lab", "days": [3], "time": "9:30 - 11:20 AM", "range_start": "2026-08-27", "range_end": "2026-12-10", "room": "SL 251"},
@@ -134,8 +122,57 @@ running_df = pd.DataFrame(running_data)
 if not running_df.empty:
     running_df["date"] = pd.to_datetime(running_df["date"]).dt.date
 
+# --- Streaks & Stats ---
+_completed_dates = set()
+if not activities_df.empty:
+    _completed_dates.update(activities_df[activities_df["completed"] == True]["date"].tolist())
+if not running_df.empty:
+    _completed_dates.update(
+        running_df[running_df["completed"] == True]["date"].apply(lambda d: d.isoformat()).tolist()
+    )
+
+
+def _compute_streak():
+    s = 0
+    check = today
+    if today.isoformat() not in _completed_dates:
+        check = today - timedelta(days=1)
+    while s < 365:
+        if check.isoformat() in _completed_dates:
+            s += 1
+            check -= timedelta(days=1)
+        else:
+            break
+    return s
+
+
+_streak = _compute_streak()
+_wk_s, _wk_e = week_start.isoformat(), week_end.isoformat()
+_wk_act_total, _wk_act_done = 0, 0
+if not activities_df.empty:
+    _wa = activities_df[(activities_df["date"] >= _wk_s) & (activities_df["date"] <= _wk_e)]
+    _wk_act_total = len(_wa)
+    _wk_act_done = len(_wa[_wa["completed"] == True])
+_wk_run_total, _wk_run_done = 0, 0
+if not running_df.empty:
+    _wr = running_df[(running_df["date"] >= week_start) & (running_df["date"] <= week_end)]
+    _wr_real = _wr[~_wr["workout"].str.startswith("Rest", na=False)]
+    _wk_run_total = len(_wr_real)
+    _wk_run_done = len(_wr_real[_wr_real["completed"] == True])
+
+s1, s2, s3, s4 = st.columns(4)
+s1.metric("Streak", f"{_streak} day{'s' if _streak != 1 else ''}")
+s2.metric("Activities", f"{_wk_act_done}/{_wk_act_total}" if _wk_act_total else "0")
+s3.metric("Runs", f"{_wk_run_done}/{_wk_run_total}" if _wk_run_total else "0")
+try:
+    _reading = fetch_all("books", filters={"status": "reading"})
+    s4.metric("Reading", len(_reading))
+except Exception:
+    s4.metric("Reading", 0)
+
 # --- Weekly grid ---
 day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+class_keywords = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
 
 
 def render_day_column(col, i, day, clickable=True):
@@ -151,7 +188,6 @@ def render_day_column(col, i, day, clickable=True):
             header = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
             st.markdown(header)
 
-        class_keywords = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
         day_cal = [e for e in cal_events if e["date"] == day_str
                    and not any(kw in e["title"] for kw in class_keywords)]
         for event in sorted(day_cal, key=lambda e: e["start_time"]):
@@ -256,9 +292,8 @@ if focus_str != today.isoformat():
         st.session_state["focus_day"] = today.isoformat()
         st.rerun()
 
-class_kw = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
 focus_cal = [e for e in cal_events if e["date"] == focus_str
-             and not any(kw in e["title"] for kw in class_kw)]
+             and not any(kw in e["title"] for kw in class_keywords)]
 focus_classes = [cls for cls in SCHOOL_SCHEDULE
                  if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
                  and focus_date.weekday() in cls["days"]]
@@ -427,6 +462,8 @@ with st.expander("Sync to phone"):
         "rap_writing": 90, "running": 45, "other": 60,
     }
 
+    TZ_ID = "America/Indiana/Indianapolis"
+
     def build_ics():
         lines = [
             "BEGIN:VCALENDAR",
@@ -434,6 +471,7 @@ with st.expander("Sync to phone"):
             "PRODID:-//MyDashboard//Planner//EN",
             "CALSCALE:GREGORIAN",
             "X-WR-CALNAME:Training Plan",
+            f"X-WR-TIMEZONE:{TZ_ID}",
         ]
 
         if not activities_df.empty:
@@ -452,8 +490,8 @@ with st.expander("Sync to phone"):
                 lines.extend([
                     "BEGIN:VEVENT",
                     f"UID:act-{act['id']}@mydashboard",
-                    f"DTSTART:{dtstart}",
-                    f"DTEND:{dtend}",
+                    f"DTSTART;TZID={TZ_ID}:{dtstart}",
+                    f"DTEND;TZID={TZ_ID}:{dtend}",
                     f"SUMMARY:{summary}",
                     "END:VEVENT",
                 ])
@@ -471,8 +509,8 @@ with st.expander("Sync to phone"):
                 event = [
                     "BEGIN:VEVENT",
                     f"UID:run-{run['id']}@mydashboard",
-                    f"DTSTART:{d}T063000",
-                    f"DTEND:{d}T073000",
+                    f"DTSTART;TZID={TZ_ID}:{d}T210000",
+                    f"DTEND;TZID={TZ_ID}:{d}T220000",
                     f"SUMMARY:Running: {title}",
                     f"DESCRIPTION:{description}",
                     "END:VEVENT",
@@ -665,3 +703,47 @@ if not seasons_df.empty:
                 st.caption("No team win data yet.")
 else:
     st.info("No Madden data loaded.")
+
+# --- Year in Review ---
+with st.expander(f"{today.year} in Review"):
+    _year_start = date(today.year, 1, 1).isoformat()
+    yr1, yr2, yr3, yr4 = st.columns(4)
+
+    _yr_act_count = 0
+    if not activities_df.empty:
+        _yr_acts = activities_df[(activities_df["date"] >= _year_start) & (activities_df["completed"] == True)]
+        _yr_act_count = len(_yr_acts)
+    yr1.metric("Activities", _yr_act_count)
+
+    _yr_run_count = 0
+    if not running_df.empty:
+        _yr_runs = running_df[running_df["date"] >= date(today.year, 1, 1)]
+        _yr_runs_real = _yr_runs[~_yr_runs["workout"].str.startswith("Rest", na=False)]
+        _yr_run_count = len(_yr_runs_real[_yr_runs_real["completed"] == True])
+    yr2.metric("Run Workouts", _yr_run_count)
+
+    try:
+        _yr_bdata = fetch_all("books", filters={"status": "completed"})
+        _yr_bdf = pd.DataFrame(_yr_bdata) if _yr_bdata else pd.DataFrame()
+        if not _yr_bdf.empty and "end_date" in _yr_bdf.columns:
+            _yr_finished = _yr_bdf[_yr_bdf["end_date"].fillna("") >= _year_start]
+            yr3.metric("Books Read", len(_yr_finished))
+            _yr_pages = int(_yr_finished["total_pages"].dropna().sum()) if "total_pages" in _yr_finished.columns else 0
+            if _yr_pages > 0:
+                yr3.caption(f"{_yr_pages:,} pages")
+        else:
+            yr3.metric("Books Read", 0)
+    except Exception:
+        yr3.metric("Books Read", 0)
+
+    _yr_data = len(picks_df) + len(seasons_df)
+    yr4.metric("Game Records", _yr_data)
+
+    if not activities_df.empty:
+        _yr_all = activities_df[(activities_df["date"] >= _year_start) & (activities_df["completed"] == True)]
+        if not _yr_all.empty:
+            st.markdown("**Activity Breakdown**")
+            _type_chart = _yr_all["activity_type"].map(
+                lambda x: ACTIVITY_TYPES.get(x, ACTIVITY_TYPES["other"])[0]
+            ).value_counts()
+            st.bar_chart(_type_chart)

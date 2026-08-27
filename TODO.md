@@ -1,23 +1,13 @@
-Multiple of each position for eos all pros - refer to old file
+# TODO
 
-add single pick may default to a year... might need to be able to set that somewhere
+## In Progress
+- Hide seasons with no data in Madden
+- Set primary game for Madden and CFB (partially done — setting exists, UI works)
+- Primary team should default to the franchise name (partially done)
 
-i have to scroll a while to get to day on the running tab
-
-manage books expander should have author and year
-
-hide seasons with no data madden
-
-make primary team less ambigous... i usually use 1 team per franchise
-
-better way of looking at all pro teams rather than a table... maybe make an interactive depth chart or something cool like that
-
-all pro selections by position makes no fucking sense
-
-break players team and ovr out for all pros for more insights... (would require update script for old data)
-
-hide any delete functionality at the bottom far away
-
-primary team should default to the name of the franchise
-
-set primary game for madden and cfb
+## Ideas
+- Add due dates to To Do items
+- Book ratings (1-5 stars on completion)
+- Running performance tracking (actual times/distances, not just completion)
+- Tighten RLS policies (currently wide-open; anyone with anon key can read/write all tables)
+- Unified data export/backup

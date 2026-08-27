@@ -24,20 +24,29 @@ STATUS_LABELS = {
 
 today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 
+
+def book_line(book, include_pages=True):
+    line = f"**{book['title']}**"
+    if book.get("author"):
+        line += f" — {book['author']}"
+    if book.get("genre"):
+        line += f" · {book['genre']}"
+    yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
+    if yr > 0:
+        line += f" · {yr}"
+    if include_pages:
+        total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
+        if total > 0:
+            line += f" · {total}p"
+    return line
+
 # --- Currently Reading ---
 reading = df[df["status"] == "reading"] if not df.empty else pd.DataFrame()
 
 if not reading.empty:
     st.subheader("Currently Reading")
     for _, book in reading.iterrows():
-        title_line = f"**{book['title']}**"
-        if book.get("author"):
-            title_line += f" — {book['author']}"
-        if book.get("genre"):
-            title_line += f" · {book['genre']}"
-        yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
-        if yr > 0:
-            title_line += f" · {yr}"
+        title_line = book_line(book, include_pages=False)
 
         cur = int(book["current_page"]) if pd.notna(book.get("current_page")) else 0
         total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
@@ -108,17 +117,8 @@ if not df.empty:
 if not completed.empty:
     with st.expander(f"Completed ({len(completed)})", expanded=True):
         for _, book in completed.sort_values("end_date", ascending=False).iterrows():
-            line = f"**{book['title']}**"
-            if book.get("author"):
-                line += f" — {book['author']}"
-            if book.get("genre"):
-                line += f" · {book['genre']}"
-            yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
-            if yr > 0:
-                line += f" · {yr}"
+            line = book_line(book)
             total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
-            if total > 0:
-                line += f" · {total}p"
             if book.get("start_date") and book.get("end_date"):
                 s = book["start_date"]
                 e = book["end_date"]
@@ -143,17 +143,7 @@ if not want.empty:
     with st.expander(f"Want to Read ({len(want)})"):
         for _, book in want.iterrows():
             wc1, wc2 = st.columns([6, 1])
-            line = f"**{book['title']}**"
-            if book.get("author"):
-                line += f" — {book['author']}"
-            if book.get("genre"):
-                line += f" · {book['genre']}"
-            yr = int(book["year_published"]) if pd.notna(book.get("year_published")) else 0
-            if yr > 0:
-                line += f" · {yr}"
-            total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
-            if total > 0:
-                line += f" · {total}p"
+            line = book_line(book)
             wc1.markdown(line)
             if wc2.button("Start", key=f"start_{book['id']}"):
                 update_row("books", int(book["id"]), {

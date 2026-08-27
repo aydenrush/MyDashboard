@@ -2,20 +2,27 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta, datetime
 from zoneinfo import ZoneInfo
-from db import fetch_all, insert_rows, update_row, get_supabase
+from db import fetch_all, insert_row, insert_rows, update_row, get_supabase
 from auth import require_login
 from ui_helpers import delete_button
+from constants import ACTIVITY_TYPES
 
-st.set_page_config(page_title="Running Schedule", layout="wide")
+st.set_page_config(page_title="Training", layout="wide")
 require_login()
 
-st.title("Running Schedule")
+st.title("Training")
 
 try:
     data = fetch_all("running_schedule", order_col="date")
 except Exception:
     data = []
 df = pd.DataFrame(data)
+
+try:
+    _act_data = fetch_all("activities", order_col="date")
+except Exception:
+    _act_data = []
+_act_df = pd.DataFrame(_act_data)
 
 today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 _has_data = not df.empty
@@ -231,7 +238,81 @@ if _has_data:
 
 st.divider()
 
-with st.expander("Add to Schedule"):
+# --- Training Plan ---
+with st.expander("Training Plan"):
+    _tp_start = today - timedelta(days=today.weekday())
+    _tp_end = _tp_start + timedelta(days=6)
+    _tp_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    _tp_runs = df[(df["date"] >= _tp_start) & (df["date"] <= _tp_end)] if _has_data else pd.DataFrame()
+
+    _tp_cols = st.columns(7)
+    for _ti, _tc in enumerate(_tp_cols):
+        _td = _tp_start + timedelta(days=_ti)
+        _td_str = _td.isoformat()
+        with _tc:
+            _bold = "**" if _td == today else ""
+            st.caption(f"{_bold}{_tp_labels[_ti]}{_bold} {_td.strftime('%m/%d')}")
+            _found = False
+
+            if not _tp_runs.empty:
+                _tr = _tp_runs[_tp_runs["date"] == _td]
+                if not _tr.empty:
+                    _found = True
+                    _r = _tr.iloc[0]
+                    _clr = TYPE_COLORS[_r["type"]]
+                    _ttl = _r["workout"].split("\n")[0]
+                    _txt = f"~~{_ttl}~~" if _r["completed"] else _ttl
+                    st.markdown(
+                        f'<span style="color:{_clr};font-size:0.85em;">{_txt}</span>',
+                        unsafe_allow_html=True,
+                    )
+
+            if not _act_df.empty:
+                _ta = _act_df[_act_df["date"] == _td_str]
+                for _, _a in _ta.iterrows():
+                    if _a["activity_type"] == "running":
+                        continue
+                    _found = True
+                    _at = ACTIVITY_TYPES.get(_a["activity_type"], ACTIVITY_TYPES["other"])
+                    _lbl, _clr = _at
+                    _done = _a.get("completed", False)
+                    _raw = _a.get("title")
+                    _ttl = _raw if isinstance(_raw, str) and _raw.strip() else _lbl
+                    _txt = f"~~{_ttl}~~" if _done else _ttl
+                    st.markdown(
+                        f'<span style="color:{_clr};font-size:0.85em;">{_txt}</span>',
+                        unsafe_allow_html=True,
+                    )
+
+            if not _found:
+                st.caption("--")
+
+    st.divider()
+    st.markdown("**Quick Add**")
+    _qa_date = st.date_input("Date", value=today, key="qa_train_date")
+    _PRESETS = {
+        "lifting": ["Upper Body", "Lower Body", "Full Body"],
+        "cycling": ["Easy Ride", "Long Ride"],
+        "frisbee_golf": ["Round"],
+    }
+    for _qt, _qps in _PRESETS.items():
+        _ql, _qc = ACTIVITY_TYPES[_qt]
+        st.markdown(
+            f'<span style="color:{_qc};font-weight:bold;font-size:0.9em;">{_ql}</span>',
+            unsafe_allow_html=True,
+        )
+        _qcols = st.columns(len(_qps))
+        for _qi, _qp in enumerate(_qps):
+            if _qcols[_qi].button(_qp, key=f"qa_{_qt}_{_qp}"):
+                insert_row("activities", {
+                    "date": _qa_date.isoformat(),
+                    "activity_type": _qt,
+                    "title": _qp,
+                    "completed": False,
+                })
+                st.rerun()
+
+with st.expander("Add Running Schedule"):
     st.markdown("Paste tab-separated rows: `Date` and `Workout`")
     st.code("2026-08-17\tEasy Run - 30 min\n2026-08-18\tRest Day")
     paste_text = st.text_area("Paste rows here", height=150, key="paste_schedule")

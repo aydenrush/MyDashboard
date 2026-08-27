@@ -828,6 +828,77 @@ def parse_team_ovr(text):
     return team, ovr
 
 
+def render_allpro_form(prefix):
+    st.caption("Enter player name + optional team & OVR (e.g., 'KC 99')")
+    for section, positions in [("Offense", AP_POSITIONS_OFF), ("Defense", AP_POSITIONS_DEF), ("Special Teams", AP_POSITIONS_ST)]:
+        st.markdown(f"**{section}**")
+        for pos in positions:
+            pc1, pc2 = st.columns([3, 1])
+            pc1.text_input(pos, placeholder="Player", key=f"{prefix}_{pos}")
+            pc2.text_input("", placeholder="TM 99", key=f"{prefix}tovr_{pos}", label_visibility="collapsed")
+
+
+def collect_allpro_rows(prefix, year):
+    rows = []
+    for pos in AP_POSITIONS_ALL:
+        player = st.session_state.get(f"{prefix}_{pos}", "").strip()
+        if player:
+            raw = st.session_state.get(f"{prefix}tovr_{pos}", "").strip()
+            team, ovr = parse_team_ovr(raw)
+            rows.append({"year": year, "position_label": pos, "player": player, "team": team, "ovr": ovr})
+    return rows
+
+
+def render_division_inputs(prefix):
+    afc_col, nfc_col = st.columns(2)
+    for col, conference, divs in [
+        (afc_col, "AFC", ["AFC East", "AFC North", "AFC South", "AFC West"]),
+        (nfc_col, "NFC", ["NFC East", "NFC North", "NFC South", "NFC West"]),
+    ]:
+        with col:
+            st.markdown(f"**{conference}**")
+            for div_name in divs:
+                st.caption(div_name)
+                teams = NFL_DIVISIONS[div_name]
+                tc = st.columns(4)
+                for c, team in zip(tc, teams):
+                    label = f"{team} ({NFL_COLORS[team][2]})" if team in NFL_COLORS else team
+                    c.text_input(label, placeholder="W-L", key=f"{prefix}_{team}")
+
+
+def collect_team_wins(prefix, franchise, year, custom_text=""):
+    rows, errors = [], []
+    for team in ALL_DIV_TEAMS:
+        record = st.session_state.get(f"{prefix}_{team}", "").strip()
+        if not record:
+            continue
+        parts = record.split("-")
+        try:
+            wins = int(parts[0])
+        except (ValueError, IndexError):
+            errors.append(f"{team}: invalid record '{record}'")
+            continue
+        rows.append({"franchise": franchise, "year": year, "team": team, "wins": wins})
+    if custom_text and custom_text.strip():
+        for line in custom_text.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                errors.append(f"Bad custom line: '{line}'")
+                continue
+            abbr = parts[0].upper()
+            rec_parts = parts[1].split("-")
+            try:
+                wins = int(rec_parts[0])
+            except (ValueError, IndexError):
+                errors.append(f"{abbr}: invalid record '{parts[1]}'")
+                continue
+            rows.append({"franchise": franchise, "year": year, "team": abbr, "wins": wins})
+    return rows, errors
+
+
 with add_eos:
     st.subheader("End of Season Entry")
     st.caption("Enter all season data at once: awards, team records, and All-Pro selections.")
@@ -860,51 +931,14 @@ with add_eos:
 
         st.markdown("---")
         st.markdown("### Team Records (W-L)")
-        eos_afc, eos_nfc = st.columns(2)
-        with eos_afc:
-            st.markdown("**AFC**")
-            for div_name in ["AFC East", "AFC North", "AFC South", "AFC West"]:
-                st.caption(div_name)
-                teams = NFL_DIVISIONS[div_name]
-                tc1, tc2, tc3, tc4 = st.columns(4)
-                for col, team in zip([tc1, tc2, tc3, tc4], teams):
-                    label = team
-                    if team in NFL_COLORS:
-                        label = f"{team} ({NFL_COLORS[team][2]})"
-                    col.text_input(label, placeholder="W-L", key=f"eos_rec_{team}")
-        with eos_nfc:
-            st.markdown("**NFC**")
-            for div_name in ["NFC East", "NFC North", "NFC South", "NFC West"]:
-                st.caption(div_name)
-                teams = NFL_DIVISIONS[div_name]
-                tc1, tc2, tc3, tc4 = st.columns(4)
-                for col, team in zip([tc1, tc2, tc3, tc4], teams):
-                    label = team
-                    if team in NFL_COLORS:
-                        label = f"{team} ({NFL_COLORS[team][2]})"
-                    col.text_input(label, placeholder="W-L", key=f"eos_rec_{team}")
+        render_division_inputs("eos_rec")
 
         st.caption("Custom / Relocated (one per line: ABBR W-L)")
         eos_custom = st.text_area("Custom teams", height=60, key="eos_custom", label_visibility="collapsed")
 
         st.markdown("---")
         st.markdown("### All-Pro Team")
-        st.caption("Enter player name + optional team & OVR (e.g., 'KC 99')")
-        st.markdown("**Offense**")
-        for pos in AP_POSITIONS_OFF:
-            pc1, pc2 = st.columns([3, 1])
-            pc1.text_input(pos, placeholder="Player", key=f"eos_ap_{pos}")
-            pc2.text_input("", placeholder="TM 99", key=f"eos_aptovr_{pos}", label_visibility="collapsed")
-        st.markdown("**Defense**")
-        for pos in AP_POSITIONS_DEF:
-            pc1, pc2 = st.columns([3, 1])
-            pc1.text_input(pos, placeholder="Player", key=f"eos_ap_{pos}")
-            pc2.text_input("", placeholder="TM 99", key=f"eos_aptovr_{pos}", label_visibility="collapsed")
-        st.markdown("**Special Teams**")
-        for pos in AP_POSITIONS_ST:
-            pc1, pc2 = st.columns([3, 1])
-            pc1.text_input(pos, placeholder="Player", key=f"eos_ap_{pos}")
-            pc2.text_input("", placeholder="TM 99", key=f"eos_aptovr_{pos}", label_visibility="collapsed")
+        render_allpro_form("eos_ap")
 
         if st.form_submit_button("Submit Full Season"):
             eos_fran = eos_fran_new.strip() if eos_fran_new.strip() else eos_fran_sel
@@ -921,54 +955,12 @@ with add_eos:
                 "ninety_nine_club": eos_99 or None,
             })
 
-            wins_rows = []
-            for team in ALL_DIV_TEAMS:
-                record = st.session_state.get(f"eos_rec_{team}", "").strip()
-                if not record:
-                    continue
-                parts = record.split("-")
-                try:
-                    wins = int(parts[0])
-                except (ValueError, IndexError):
-                    errors.append(f"{team}: invalid record '{record}'")
-                    continue
-                wins_rows.append({
-                    "franchise": eos_fran, "year": eos_year,
-                    "team": team, "wins": wins,
-                })
-            if eos_custom and eos_custom.strip():
-                for line in eos_custom.strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    parts = line.split()
-                    if len(parts) < 2:
-                        errors.append(f"Bad custom line: '{line}'")
-                        continue
-                    team_abbr = parts[0].upper()
-                    rec_parts = parts[1].split("-")
-                    try:
-                        wins = int(rec_parts[0])
-                    except (ValueError, IndexError):
-                        errors.append(f"{team_abbr}: invalid record '{parts[1]}'")
-                        continue
-                    wins_rows.append({
-                        "franchise": eos_fran, "year": eos_year,
-                        "team": team_abbr, "wins": wins,
-                    })
+            wins_rows, wins_errors = collect_team_wins("eos_rec", eos_fran, eos_year, eos_custom)
+            errors.extend(wins_errors)
             if wins_rows:
                 insert_rows(wins_table, wins_rows)
 
-            ap_rows = []
-            for pos in AP_POSITIONS_ALL:
-                player = st.session_state.get(f"eos_ap_{pos}", "").strip()
-                if player:
-                    team_ovr_raw = st.session_state.get(f"eos_aptovr_{pos}", "").strip()
-                    team, ovr = parse_team_ovr(team_ovr_raw)
-                    ap_rows.append({
-                        "year": eos_year, "position_label": pos,
-                        "player": player, "team": team, "ovr": ovr,
-                    })
+            ap_rows = collect_allpro_rows("eos_ap", eos_year)
             if ap_rows:
                 insert_rows(allpro_table, ap_rows)
 
@@ -1103,35 +1095,7 @@ with add_wins:
             "Year", min_value=2023, max_value=2060, value=default_year, key="wins_year",
         )
 
-        afc_col, nfc_col = st.columns(2)
-
-        with afc_col:
-            st.subheader("AFC")
-            for div_name in ["AFC East", "AFC North", "AFC South", "AFC West"]:
-                st.markdown(f"**{div_name}**")
-                teams = NFL_DIVISIONS[div_name]
-                c1, c2, c3, c4 = st.columns(4)
-                for col, team in zip([c1, c2, c3, c4], teams):
-                    label = f"{team}"
-                    if team in NFL_COLORS:
-                        label = f"{team} ({NFL_COLORS[team][2]})"
-                    col.text_input(
-                        label, placeholder="W-L", key=f"rec_{team}",
-                    )
-
-        with nfc_col:
-            st.subheader("NFC")
-            for div_name in ["NFC East", "NFC North", "NFC South", "NFC West"]:
-                st.markdown(f"**{div_name}**")
-                teams = NFL_DIVISIONS[div_name]
-                c1, c2, c3, c4 = st.columns(4)
-                for col, team in zip([c1, c2, c3, c4], teams):
-                    label = f"{team}"
-                    if team in NFL_COLORS:
-                        label = f"{team} ({NFL_COLORS[team][2]})"
-                    col.text_input(
-                        label, placeholder="W-L", key=f"rec_{team}",
-                    )
+        render_division_inputs("rec")
 
         st.markdown("**Custom / Relocated Teams**")
         st.caption("One per line: ABBR W-L (e.g. MEL 10-7)")
@@ -1141,48 +1105,7 @@ with add_wins:
         )
 
         if st.form_submit_button("Submit Records"):
-            db_rows = []
-            errors = []
-            for team in ALL_DIV_TEAMS:
-                record = st.session_state.get(f"rec_{team}", "").strip()
-                if not record:
-                    continue
-                parts = record.split("-")
-                try:
-                    wins = int(parts[0])
-                except (ValueError, IndexError):
-                    errors.append(f"{team}: invalid record '{record}'")
-                    continue
-                db_rows.append({
-                    "franchise": wins_fran,
-                    "year": wins_year,
-                    "team": team,
-                    "wins": wins,
-                })
-
-            if custom_records and custom_records.strip():
-                for line in custom_records.strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    parts = line.split()
-                    if len(parts) < 2:
-                        errors.append(f"Bad custom line: '{line}'")
-                        continue
-                    team_abbr = parts[0].upper()
-                    record = parts[1]
-                    rec_parts = record.split("-")
-                    try:
-                        wins = int(rec_parts[0])
-                    except (ValueError, IndexError):
-                        errors.append(f"{team_abbr}: invalid record '{record}'")
-                        continue
-                    db_rows.append({
-                        "franchise": wins_fran,
-                        "year": wins_year,
-                        "team": team_abbr,
-                        "wins": wins,
-                    })
+            db_rows, errors = collect_team_wins("rec", wins_fran, wins_year, custom_records)
 
             if errors:
                 for e in errors:
@@ -1272,38 +1195,10 @@ with add_allpro:
             "Year", min_value=2023, max_value=2060, value=default_year, key="ap_add_year",
         )
 
-        st.markdown("**Offense**")
-        for pos in AP_POSITIONS_OFF:
-            pc1, pc2 = st.columns([3, 1])
-            pc1.text_input(pos, placeholder="Player", key=f"ap_{pos}")
-            pc2.text_input("", placeholder="TM 99", key=f"aptovr_{pos}", label_visibility="collapsed")
-
-        st.markdown("**Defense**")
-        for pos in AP_POSITIONS_DEF:
-            pc1, pc2 = st.columns([3, 1])
-            pc1.text_input(pos, placeholder="Player", key=f"ap_{pos}")
-            pc2.text_input("", placeholder="TM 99", key=f"aptovr_{pos}", label_visibility="collapsed")
-
-        st.markdown("**Special Teams**")
-        for pos in AP_POSITIONS_ST:
-            pc1, pc2 = st.columns([3, 1])
-            pc1.text_input(pos, placeholder="Player", key=f"ap_{pos}")
-            pc2.text_input("", placeholder="TM 99", key=f"aptovr_{pos}", label_visibility="collapsed")
+        render_allpro_form("ap")
 
         if st.form_submit_button("Submit All-Pro Team"):
-            db_rows = []
-            for pos in AP_POSITIONS_ALL:
-                player = st.session_state.get(f"ap_{pos}", "").strip()
-                if player:
-                    team_ovr_raw = st.session_state.get(f"aptovr_{pos}", "").strip()
-                    team, ovr = parse_team_ovr(team_ovr_raw)
-                    db_rows.append({
-                        "year": ap_year,
-                        "position_label": pos,
-                        "player": player,
-                        "team": team,
-                        "ovr": ovr,
-                    })
+            db_rows = collect_allpro_rows("ap", ap_year)
             if db_rows:
                 insert_rows(allpro_table, db_rows)
                 st.success(f"Added {len(db_rows)} All-Pro selections.")

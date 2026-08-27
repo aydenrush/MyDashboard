@@ -96,3 +96,16 @@ def age_from_class(class_str):
     if not class_str:
         return None
     return CLASS_AGE.get(class_str.strip().upper())
+
+
+ACTIVITY_TYPES = {
+    "running": ("Running", "#F44336"),
+    "lifting": ("Lifting", "#FF9800"),
+    "cycling": ("Cycling", "#4CAF50"),
+    "frisbee_golf": ("Frisbee Golf", "#2196F3"),
+    "rap_writing": ("Rap Writing", "#9C27B0"),
+    "other": ("Other", "#607D8B"),
+}
+
+TIME_SLOTS = ["Morning", "Midday", "Afternoon", "Evening"]
+TIME_DISPLAY = {"Morning": "8 AM", "Midday": "11 AM", "Afternoon": "2 PM", "Evening": "5:30 PM"}
