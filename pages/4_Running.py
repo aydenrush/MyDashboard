@@ -100,6 +100,29 @@ if _has_data:
                 st.rerun()
         else:
             st.success("Completed!")
+
+        try:
+            _today_logs = [r for r in (_rl_data or []) if r.get("date") == today.isoformat()]
+        except Exception:
+            _today_logs = []
+        if _today_logs:
+            for _tl in _today_logs:
+                _tl_parts = []
+                if _tl.get("distance_miles"):
+                    _tl_parts.append(f"{float(_tl['distance_miles']):.2f} mi")
+                if _tl.get("duration_seconds"):
+                    _ds = int(_tl["duration_seconds"])
+                    if _ds >= 3600:
+                        _tl_parts.append(f"{_ds // 3600}:{(_ds % 3600) // 60:02d}:{_ds % 60:02d}")
+                    else:
+                        _tl_parts.append(f"{_ds // 60}:{_ds % 60:02d}")
+                if _tl.get("pace_seconds"):
+                    _pm, _ps = divmod(int(_tl["pace_seconds"]), 60)
+                    _tl_parts.append(f"{_pm}:{_ps:02d}/mi")
+                if _tl.get("elevation_gain_ft") and float(_tl["elevation_gain_ft"]) > 0:
+                    _tl_parts.append(f"↑{int(float(_tl['elevation_gain_ft']))} ft")
+                _src = " `GPX`" if _tl.get("source") == "gpx" else ""
+                st.caption("Actual: " + " · ".join(_tl_parts) + _src)
     else:
         st.info("No workout scheduled for today.")
 
@@ -348,6 +371,236 @@ else:
                         _parts.append(_name)
                     st.caption(" · ".join(_parts))
 
+    if not _rl_df.empty and len(_rl_df) >= 2:
+        with st.expander("Run Analytics"):
+            import numpy as np
+
+            _an_df = _rl_df.copy()
+            _an_df = _an_df.sort_values("date")
+
+            # --- Weekly Mileage + 10% Rule ---
+            st.markdown("**Weekly Mileage**")
+            _an_df["week"] = _an_df["date"].apply(lambda d: (d - timedelta(days=d.weekday())).isoformat())
+            _wk_miles = _an_df.groupby("week")["distance_miles"].sum().reset_index()
+            _wk_miles.columns = ["Week", "Miles"]
+            _wk_miles = _wk_miles.sort_values("Week")
+
+            if len(_wk_miles) >= 2:
+                _wk_miles["4wk Avg"] = _wk_miles["Miles"].rolling(4, min_periods=1).mean()
+                _wk_miles["10% Cap"] = _wk_miles["Miles"].shift(1) * 1.1
+                _wk_miles["10% Cap"] = _wk_miles["10% Cap"].fillna(_wk_miles["Miles"].iloc[0])
+
+                _chart_data = _wk_miles.set_index("Week")[["Miles", "4wk Avg", "10% Cap"]]
+                st.line_chart(_chart_data)
+
+                _over = _wk_miles[_wk_miles["Miles"] > _wk_miles["10% Cap"]]
+                if not _over.empty:
+                    st.warning(
+                        f"{len(_over)} week(s) exceeded the 10% rule — "
+                        f"ramp mileage gradually to avoid injury."
+                    )
+            else:
+                st.bar_chart(_wk_miles.set_index("Week")["Miles"])
+
+            # --- Pace Trend ---
+            _pace_df = _an_df[_an_df["pace_seconds"].notna()].copy()
+            if len(_pace_df) >= 2:
+                st.markdown("**Pace Trend**")
+                _pace_chart = _pace_df[["date", "pace_seconds"]].copy()
+                _pace_chart["Pace (min/mi)"] = _pace_chart["pace_seconds"] / 60
+                _pace_chart["7-Run Avg"] = _pace_chart["Pace (min/mi)"].rolling(7, min_periods=2).mean()
+                _pace_chart = _pace_chart.set_index("date")[["Pace (min/mi)", "7-Run Avg"]]
+                st.line_chart(_pace_chart)
+
+                _first_5 = _pace_df.head(5)["pace_seconds"].mean()
+                _last_5 = _pace_df.tail(5)["pace_seconds"].mean()
+                _diff = _first_5 - _last_5
+                if _diff > 0:
+                    st.caption(f"Pace improved by {_diff:.0f}s/mi (first 5 vs last 5 runs)")
+                elif _diff < 0:
+                    st.caption(f"Pace slowed by {abs(_diff):.0f}s/mi (first 5 vs last 5 runs)")
+
+            # --- Training Load (Acute:Chronic) ---
+            st.markdown("**Training Load**")
+            _load_dates = []
+            _acwr_vals = []
+            _acute_vals = []
+            _chronic_vals = []
+            _all_dates = sorted(_an_df["date"].unique())
+            for _ld in _all_dates:
+                _acute_start = _ld - timedelta(days=6)
+                _chronic_start = _ld - timedelta(days=27)
+                _ac = _an_df[(_an_df["date"] >= _acute_start) & (_an_df["date"] <= _ld)]["distance_miles"].sum()
+                _ch = _an_df[(_an_df["date"] >= _chronic_start) & (_an_df["date"] <= _ld)]["distance_miles"].sum() / 4
+                _load_dates.append(_ld)
+                _acute_vals.append(_ac)
+                _chronic_vals.append(round(_ch, 1))
+                _acwr_vals.append(round(_ac / _ch, 2) if _ch > 0 else 0)
+
+            _load_df = pd.DataFrame({
+                "date": _load_dates,
+                "ACWR": _acwr_vals,
+            }).set_index("date")
+
+            st.line_chart(_load_df)
+            _latest_acwr = _acwr_vals[-1] if _acwr_vals else 0
+            if _latest_acwr > 1.5:
+                st.error(f"ACWR: {_latest_acwr:.2f} — injury risk zone. Consider dialing back this week.")
+            elif _latest_acwr < 0.8:
+                st.warning(f"ACWR: {_latest_acwr:.2f} — detraining zone. You can safely add more.")
+            else:
+                st.success(f"ACWR: {_latest_acwr:.2f} — sweet spot (0.8–1.3 is optimal).")
+            st.caption("Acute:Chronic Workload Ratio — 7-day mileage ÷ 28-day weekly avg")
+
+            # --- Effort Zones ---
+            if not _pace_df.empty:
+                st.markdown("**Effort Zones**")
+                _all_paces = _pace_df["pace_seconds"].dropna()
+                _median_pace = _all_paces.median()
+
+                def _effort_zone(p):
+                    if p <= _median_pace * 0.85:
+                        return "Speed"
+                    elif p <= _median_pace * 0.93:
+                        return "Tempo"
+                    elif p <= _median_pace * 1.05:
+                        return "Moderate"
+                    else:
+                        return "Easy"
+
+                _pace_df["zone"] = _pace_df["pace_seconds"].apply(_effort_zone)
+                _zone_counts = _pace_df["zone"].value_counts()
+                _zone_order = ["Easy", "Moderate", "Tempo", "Speed"]
+                _zone_counts = _zone_counts.reindex(_zone_order).dropna().astype(int)
+
+                st.bar_chart(_zone_counts)
+
+                _easy_pct = _zone_counts.get("Easy", 0) / len(_pace_df) * 100 if len(_pace_df) > 0 else 0
+                if _easy_pct < 70:
+                    st.caption(
+                        f"Easy runs: {_easy_pct:.0f}% — aim for ~80% easy to avoid overtraining"
+                    )
+                else:
+                    st.caption(f"Easy runs: {_easy_pct:.0f}% — good balance")
+
+            # --- Split Analysis ---
+            _split_runs = _an_df[_an_df["splits"].apply(lambda x: isinstance(x, list) and len(x) > 1)]
+            if not _split_runs.empty:
+                st.markdown("**Split Analysis**")
+                _neg_splits = 0
+                _pos_splits = 0
+                _even_splits = 0
+                _fastest_mile = None
+                _fastest_mile_run = None
+                _consistencies = []
+
+                for _, _sr in _split_runs.iterrows():
+                    sp = _sr["splits"]
+                    full_miles = sp[:-1] if len(sp) > 1 else sp
+                    if not full_miles:
+                        continue
+
+                    first_half = full_miles[:len(full_miles) // 2]
+                    second_half = full_miles[len(full_miles) // 2:]
+                    if first_half and second_half:
+                        avg_first = sum(first_half) / len(first_half)
+                        avg_second = sum(second_half) / len(second_half)
+                        if avg_second < avg_first * 0.98:
+                            _neg_splits += 1
+                        elif avg_second > avg_first * 1.02:
+                            _pos_splits += 1
+                        else:
+                            _even_splits += 1
+
+                    _std = np.std(full_miles)
+                    _consistencies.append(round(_std, 1))
+
+                    _min_split = min(full_miles)
+                    if _fastest_mile is None or _min_split < _fastest_mile:
+                        _fastest_mile = _min_split
+                        _fastest_mile_run = _sr["date"]
+
+                sc1, sc2, sc3 = st.columns(3)
+                sc1.metric("Negative Splits", _neg_splits)
+                sc2.metric("Even Splits", _even_splits)
+                sc3.metric("Positive Splits", _pos_splits)
+
+                if _fastest_mile:
+                    _fm, _fs = divmod(int(_fastest_mile), 60)
+                    st.caption(
+                        f"Fastest mile: {_fm}:{_fs:02d} on "
+                        f"{_fastest_mile_run.strftime('%b %d')}"
+                    )
+
+                if _consistencies:
+                    _avg_cons = sum(_consistencies) / len(_consistencies)
+                    if _avg_cons < 10:
+                        st.caption(f"Avg split consistency: ±{_avg_cons:.0f}s — very even pacing")
+                    elif _avg_cons < 20:
+                        st.caption(f"Avg split consistency: ±{_avg_cons:.0f}s — solid pacing")
+                    else:
+                        st.caption(f"Avg split consistency: ±{_avg_cons:.0f}s — pacing could be more even")
+
+            # --- Route Comparison ---
+            _named = _an_df[_an_df["route_name"].notna() & (_an_df["route_name"] != "")]
+            if not _named.empty:
+                _route_counts = _named["route_name"].value_counts()
+                _repeat_routes = _route_counts[_route_counts > 1]
+                if not _repeat_routes.empty:
+                    st.markdown("**Route Comparison**")
+                    for _rname in _repeat_routes.index[:5]:
+                        _rr = _named[_named["route_name"] == _rname].sort_values("date")
+                        st.markdown(f"*{_rname}* ({len(_rr)} runs)")
+                        _rc_data = _rr[["date", "pace_seconds"]].copy()
+                        _rc_data["Pace (min/mi)"] = _rc_data["pace_seconds"] / 60
+                        _rc_data = _rc_data.set_index("date")["Pace (min/mi)"]
+                        st.line_chart(_rc_data)
+
+                        _first_pace = _rr.iloc[0]["pace_seconds"]
+                        _last_pace = _rr.iloc[-1]["pace_seconds"]
+                        if _first_pace and _last_pace:
+                            _imp = _first_pace - _last_pace
+                            if _imp > 0:
+                                st.caption(f"Improved {_imp:.0f}s/mi from first to latest")
+                            elif _imp < 0:
+                                st.caption(f"Slowed {abs(_imp):.0f}s/mi from first to latest")
+
+            # --- Personal Records ---
+            st.markdown("**Personal Records**")
+            _pr_data = []
+
+            _best_mile = None
+            for _, _sr in _an_df.iterrows():
+                sp = _sr.get("splits")
+                if sp and isinstance(sp, list):
+                    full_miles = sp[:-1] if len(sp) > 1 else sp
+                    if full_miles:
+                        _bm = min(full_miles)
+                        if _best_mile is None or _bm < _best_mile[0]:
+                            _best_mile = (_bm, _sr["date"])
+
+            if _best_mile:
+                _m, _s = divmod(int(_best_mile[0]), 60)
+                _pr_data.append(("Fastest Mile", f"{_m}:{_s:02d}", _best_mile[1].strftime("%b %d")))
+
+            _longest = _an_df.loc[_an_df["distance_miles"].idxmax()]
+            _pr_data.append(("Longest Run", f"{_longest['distance_miles']:.2f} mi", _longest["date"].strftime("%b %d")))
+
+            _fastest_run = _pace_df.loc[_pace_df["pace_seconds"].idxmin()] if not _pace_df.empty else None
+            if _fastest_run is not None:
+                _pr_data.append(("Fastest Pace", _fmt_pace(_fastest_run["pace_seconds"]), _fastest_run["date"].strftime("%b %d")))
+
+            _most_elev = _an_df[_an_df["elevation_gain_ft"].notna()]
+            if not _most_elev.empty:
+                _me = _most_elev.loc[_most_elev["elevation_gain_ft"].idxmax()]
+                if _me["elevation_gain_ft"] > 0:
+                    _pr_data.append(("Most Elevation", f"↑{int(_me['elevation_gain_ft'])} ft", _me["date"].strftime("%b %d")))
+
+            if _pr_data:
+                _pr_cols = st.columns(len(_pr_data))
+                for _ci, (_lbl, _val, _dt) in enumerate(_pr_data):
+                    _pr_cols[_ci].metric(_lbl, _val, _dt)
+
     with st.expander("Log a Run"):
         _log_gpx, _log_manual = st.tabs(["Upload GPX", "Manual Entry"])
 
@@ -433,6 +686,11 @@ else:
                                 "notes": _gpx_notes.strip() or None,
                                 "source": "gpx",
                             })
+                            if _has_data:
+                                _sched = df[df["date"] == _gpx_date]
+                                for _, _sr in _sched.iterrows():
+                                    if not _sr["completed"]:
+                                        update_row("running_schedule", int(_sr["id"]), {"completed": True})
                             st.success("Run saved!")
                             st.rerun()
                 except ImportError:
@@ -473,6 +731,11 @@ else:
                             "notes": mr_notes.strip() or None,
                             "source": "manual",
                         })
+                        if _has_data:
+                            _sched = df[df["date"] == mr_date]
+                            for _, _sr in _sched.iterrows():
+                                if not _sr["completed"]:
+                                    update_row("running_schedule", int(_sr["id"]), {"completed": True})
                         st.success("Run logged!")
                         st.rerun()
                     else:
