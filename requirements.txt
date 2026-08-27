@@ -3,4 +3,5 @@ supabase>=2.0.0
 pandas>=2.0.0
 icalendar>=5.0.0
 recurring-ical-events>=2.1.0
+gpxpy>=1.6.0
 starlette<0.47  # pin for Streamlit compat — check if removable on next Streamlit upgrade
