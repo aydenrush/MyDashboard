@@ -601,73 +601,90 @@ else:
                 for _ci, (_lbl, _val, _dt) in enumerate(_pr_data):
                     _pr_cols[_ci].metric(_lbl, _val, _dt)
 
+    def _parse_gpx(file_bytes):
+        import gpxpy as _gpxpy
+
+        _gpx = _gpxpy.parse(file_bytes)
+        _pts = []
+        for _trk in _gpx.tracks:
+            for _seg in _trk.segments:
+                _pts.extend(_seg.points)
+
+        if not _pts:
+            return None
+
+        _total_dist = _gpx.length_3d() or _gpx.length_2d() or 0
+        _dist_mi = _total_dist / 1609.344
+
+        _t0, _t1 = _pts[0].time, _pts[-1].time
+        _dur_s = int((_t1 - _t0).total_seconds()) if _t0 and _t1 else 0
+
+        _up, _ = _gpx.get_uphill_downhill()
+        _elev_ft = round((_up or 0) * 3.28084)
+        _pace_s = int(_dur_s / _dist_mi) if _dist_mi > 0 else 0
+
+        _splits = []
+        if _t0:
+            _cum = 0
+            _last_t = _t0
+            _prev = _pts[0]
+            _mile = 1
+            for _pt in _pts[1:]:
+                _d = (
+                    _prev.distance_3d(_pt)
+                    if _prev.elevation is not None and _pt.elevation is not None
+                    else _prev.distance_2d(_pt)
+                )
+                _cum += _d or 0
+                if _cum >= _mile * 1609.344 and _pt.time:
+                    _splits.append(int((_pt.time - _last_t).total_seconds()))
+                    _last_t = _pt.time
+                    _mile += 1
+                _prev = _pt
+            _rem = _cum - (_mile - 1) * 1609.344
+            if _rem > 160 and _pts[-1].time and _last_t:
+                _splits.append(int((_pts[-1].time - _last_t).total_seconds()))
+
+        _route = None
+        if _gpx.tracks:
+            _route = _gpx.tracks[0].name
+        if not _route:
+            _route = _gpx.name
+
+        _gpx_date = _t0.date() if _t0 else today
+
+        return {
+            "date": _gpx_date,
+            "distance_miles": round(_dist_mi, 2),
+            "duration_seconds": _dur_s,
+            "pace_seconds": _pace_s,
+            "elevation_gain_ft": _elev_ft,
+            "splits": _splits if _splits else None,
+            "route_name": _route,
+        }
+
     with st.expander("Log a Run"):
-        _log_gpx, _log_manual = st.tabs(["Upload GPX", "Manual Entry"])
+        _log_gpx, _log_manual, _log_bulk = st.tabs(["Upload GPX", "Manual Entry", "Bulk Import"])
 
         with _log_gpx:
-            gpx_file = st.file_uploader("Upload .gpx file from Strava", type=["gpx"])
+            gpx_file = st.file_uploader("Upload .gpx file from Strava", type=["gpx"], key="single_gpx")
             if gpx_file is not None:
                 try:
-                    import gpxpy as _gpxpy
-
-                    _gpx = _gpxpy.parse(gpx_file.read())
-                    _pts = []
-                    for _trk in _gpx.tracks:
-                        for _seg in _trk.segments:
-                            _pts.extend(_seg.points)
-
-                    if not _pts:
+                    parsed = _parse_gpx(gpx_file.read())
+                    if parsed is None:
                         st.error("No GPS points found in file.")
                     else:
-                        _total_dist = _gpx.length_3d() or _gpx.length_2d() or 0
-                        _dist_mi = _total_dist / 1609.344
-
-                        _t0, _t1 = _pts[0].time, _pts[-1].time
-                        _dur_s = int((_t1 - _t0).total_seconds()) if _t0 and _t1 else 0
-
-                        _up, _ = _gpx.get_uphill_downhill()
-                        _elev_ft = round((_up or 0) * 3.28084)
-                        _pace_s = int(_dur_s / _dist_mi) if _dist_mi > 0 else 0
-
-                        _splits = []
-                        if _t0:
-                            _cum = 0
-                            _last_t = _t0
-                            _prev = _pts[0]
-                            _mile = 1
-                            for _pt in _pts[1:]:
-                                _d = (
-                                    _prev.distance_3d(_pt)
-                                    if _prev.elevation is not None and _pt.elevation is not None
-                                    else _prev.distance_2d(_pt)
-                                )
-                                _cum += _d or 0
-                                if _cum >= _mile * 1609.344 and _pt.time:
-                                    _splits.append(int((_pt.time - _last_t).total_seconds()))
-                                    _last_t = _pt.time
-                                    _mile += 1
-                                _prev = _pt
-                            _rem = _cum - (_mile - 1) * 1609.344
-                            if _rem > 160 and _pts[-1].time and _last_t:
-                                _splits.append(int((_pts[-1].time - _last_t).total_seconds()))
-
-                        _route = None
-                        if _gpx.tracks:
-                            _route = _gpx.tracks[0].name
-                        if not _route:
-                            _route = _gpx.name
-
-                        _gpx_date = _t0.date() if _t0 else today
-
                         st.success(
-                            f"Parsed: {_dist_mi:.2f} mi · {_fmt_duration(_dur_s)} · "
-                            f"{_fmt_pace(_pace_s)} · ↑{_elev_ft} ft"
+                            f"Parsed: {parsed['distance_miles']:.2f} mi · "
+                            f"{_fmt_duration(parsed['duration_seconds'])} · "
+                            f"{_fmt_pace(parsed['pace_seconds'])} · "
+                            f"↑{parsed['elevation_gain_ft']} ft"
                         )
 
-                        if _splits:
+                        if parsed["splits"]:
                             _sp_strs = []
-                            for _si, _sv in enumerate(_splits):
-                                _lbl = f"Mile {_si + 1}" if _si < len(_splits) - 1 else "Last"
+                            for _si, _sv in enumerate(parsed["splits"]):
+                                _lbl = f"Mile {_si + 1}" if _si < len(parsed["splits"]) - 1 else "Last"
                                 _sm, _ss = divmod(_sv, 60)
                                 _sp_strs.append(f"{_lbl}: {_sm}:{_ss:02d}")
                             st.caption(" | ".join(_sp_strs))
@@ -676,18 +693,18 @@ else:
 
                         if st.button("Save Run", key="save_gpx"):
                             insert_row("run_logs", {
-                                "date": _gpx_date.isoformat(),
-                                "distance_miles": round(_dist_mi, 2),
-                                "duration_seconds": _dur_s,
-                                "pace_seconds": _pace_s,
-                                "elevation_gain_ft": _elev_ft,
-                                "splits": _splits if _splits else None,
-                                "route_name": _route,
+                                "date": parsed["date"].isoformat(),
+                                "distance_miles": parsed["distance_miles"],
+                                "duration_seconds": parsed["duration_seconds"],
+                                "pace_seconds": parsed["pace_seconds"],
+                                "elevation_gain_ft": parsed["elevation_gain_ft"],
+                                "splits": parsed["splits"],
+                                "route_name": parsed["route_name"],
                                 "notes": _gpx_notes.strip() or None,
                                 "source": "gpx",
                             })
                             if _has_data:
-                                _sched = df[df["date"] == _gpx_date]
+                                _sched = df[df["date"] == parsed["date"]]
                                 for _, _sr in _sched.iterrows():
                                     if not _sr["completed"]:
                                         update_row("running_schedule", int(_sr["id"]), {"completed": True})
@@ -697,6 +714,71 @@ else:
                     st.error("Install gpxpy: `pip install gpxpy`")
                 except Exception as e:
                     st.error(f"Error parsing GPX: {e}")
+
+        with _log_bulk:
+            st.caption(
+                "Upload multiple .gpx files at once — e.g., from a Strava archive "
+                "(Settings > My Account > Request Your Archive)."
+            )
+            bulk_files = st.file_uploader(
+                "Upload .gpx files", type=["gpx"], accept_multiple_files=True, key="bulk_gpx",
+            )
+            if bulk_files:
+                _existing_dates = set()
+                if not _rl_df.empty:
+                    _existing_dates = set(_rl_df["date"].apply(lambda d: d.isoformat()).tolist())
+
+                _previews = []
+                _errors = []
+                for _bf in bulk_files:
+                    try:
+                        parsed = _parse_gpx(_bf.read())
+                        if parsed:
+                            _skip = parsed["date"].isoformat() in _existing_dates
+                            _previews.append((parsed, _bf.name, _skip))
+                        else:
+                            _errors.append(f"{_bf.name}: no GPS data")
+                    except Exception as e:
+                        _errors.append(f"{_bf.name}: {e}")
+
+                _new = [p for p in _previews if not p[2]]
+                _dupes = [p for p in _previews if p[2]]
+
+                if _new:
+                    st.markdown(f"**{len(_new)} new runs to import:**")
+                    for parsed, fname, _ in _new:
+                        st.caption(
+                            f"{parsed['date'].strftime('%a %m/%d')} — "
+                            f"{parsed['distance_miles']:.2f} mi · "
+                            f"{_fmt_duration(parsed['duration_seconds'])} · "
+                            f"{_fmt_pace(parsed['pace_seconds'])}"
+                        )
+                if _dupes:
+                    st.caption(f"{len(_dupes)} already logged (skipping)")
+                for _e in _errors:
+                    st.caption(f"Error: {_e}")
+
+                if _new and st.button(f"Import {len(_new)} runs", key="bulk_import"):
+                    _imported = 0
+                    for parsed, fname, _ in _new:
+                        insert_row("run_logs", {
+                            "date": parsed["date"].isoformat(),
+                            "distance_miles": parsed["distance_miles"],
+                            "duration_seconds": parsed["duration_seconds"],
+                            "pace_seconds": parsed["pace_seconds"],
+                            "elevation_gain_ft": parsed["elevation_gain_ft"],
+                            "splits": parsed["splits"],
+                            "route_name": parsed["route_name"],
+                            "source": "gpx",
+                        })
+                        if _has_data:
+                            _sched = df[df["date"] == parsed["date"]]
+                            for _, _sr in _sched.iterrows():
+                                if not _sr["completed"]:
+                                    update_row("running_schedule", int(_sr["id"]), {"completed": True})
+                        _imported += 1
+                    st.success(f"Imported {_imported} runs!")
+                    st.rerun()
 
         with _log_manual:
             with st.form("manual_run", clear_on_submit=True):
