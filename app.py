@@ -3,18 +3,12 @@ import pandas as pd
 from datetime import date, timedelta, datetime
 from zoneinfo import ZoneInfo
 import urllib.request
-from db import fetch_all, fetch_games, insert_row, delete_row, update_row
+from db import fetch_all, insert_row, delete_row, update_row
 from auth import require_login
-from colors import get_nfl_colors
-from constants import ROUND_ORDER, AWARD_COLS, ACTIVITY_TYPES, TIME_SLOTS, TIME_DISPLAY
+from constants import ACTIVITY_TYPES, TIME_SLOTS, TIME_DISPLAY
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 require_login()
-
-st.title("Dashboard")
-st.link_button("Ayden Music", "https://aydenmusic.streamlit.app")
-
-NFL_COLORS = get_nfl_colors()
 
 today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
 
@@ -25,6 +19,9 @@ SCHOOL_SCHEDULE = [
     {"name": "CS 25100", "days": [0, 2, 4], "time": "2:30 - 3:20 PM", "range_start": "2026-08-24", "range_end": "2026-12-11", "room": "ES 2107"},
     {"name": "MA 26500", "days": [0, 2, 4], "time": "4:30 - 5:20 PM", "range_start": "2026-08-24", "range_end": "2026-12-11", "room": "SL 011"},
 ]
+
+day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+class_keywords = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
 
 
 @st.cache_data(ttl=300)
@@ -72,33 +69,14 @@ def fetch_calendar(url, start_str, end_str):
         return []
 
 
-# --- Week navigation ---
+# --- Week state ---
 if "planner_week_offset" not in st.session_state:
     st.session_state["planner_week_offset"] = 0
-
-nav1, nav2, nav3 = st.columns([1, 2, 1])
-with nav1:
-    if st.button("< Prev Week"):
-        st.session_state["planner_week_offset"] -= 1
-        st.rerun()
-with nav3:
-    if st.button("Next Week >"):
-        st.session_state["planner_week_offset"] += 1
-        st.rerun()
-
 week_offset = st.session_state["planner_week_offset"]
 week_start = today - timedelta(days=today.weekday()) + timedelta(weeks=week_offset)
 week_end = week_start + timedelta(days=6)
 
-with nav2:
-    label = "This Week" if week_offset == 0 else f"Week of {week_start.strftime('%b %d')}"
-    st.markdown(f"<h4 style='text-align:center; margin:0;'>{label}</h4>", unsafe_allow_html=True)
-    if week_offset != 0:
-        if st.button("Today", key="go_today"):
-            st.session_state["planner_week_offset"] = 0
-            st.rerun()
-
-# --- Load data ---
+# --- Load all data ---
 cal_events = []
 ical_urls = st.secrets.get("ICAL_URLS", [])
 if not ical_urls:
@@ -122,7 +100,21 @@ running_df = pd.DataFrame(running_data)
 if not running_df.empty:
     running_df["date"] = pd.to_datetime(running_df["date"]).dt.date
 
-# --- Streaks & Stats ---
+try:
+    book_data = fetch_all("books")
+except Exception:
+    book_data = []
+books_df = pd.DataFrame(book_data)
+reading_books = books_df[books_df["status"] == "reading"] if not books_df.empty else pd.DataFrame()
+
+try:
+    todo_data = fetch_all("todos", order_col="created_at")
+except Exception:
+    todo_data = []
+todos_df = pd.DataFrame(todo_data)
+active_todos = todos_df[todos_df["completed"] == False] if not todos_df.empty else pd.DataFrame()
+
+# --- Streak ---
 _completed_dates = set()
 if not activities_df.empty:
     _completed_dates.update(activities_df[activities_df["completed"] == True]["date"].tolist())
@@ -147,6 +139,7 @@ def _compute_streak():
 
 
 _streak = _compute_streak()
+
 _wk_s, _wk_e = week_start.isoformat(), week_end.isoformat()
 _wk_act_total, _wk_act_done = 0, 0
 if not activities_df.empty:
@@ -160,33 +153,234 @@ if not running_df.empty:
     _wk_run_total = len(_wr_real)
     _wk_run_done = len(_wr_real[_wr_real["completed"] == True])
 
-s1, s2, s3, s4 = st.columns(4)
-s1.metric("Streak", f"{_streak} day{'s' if _streak != 1 else ''}")
-s2.metric("Activities", f"{_wk_act_done}/{_wk_act_total}" if _wk_act_total else "0")
-s3.metric("Runs", f"{_wk_run_done}/{_wk_run_total}" if _wk_run_total else "0")
-try:
-    _reading = fetch_all("books", filters={"status": "reading"})
-    s4.metric("Reading", len(_reading))
-except Exception:
-    s4.metric("Reading", 0)
 
-# --- Weekly grid ---
-day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-class_keywords = [c["name"].split()[0] + " " + c["name"].split()[1] for c in SCHOOL_SCHEDULE]
+# ============================================================
+# TODAY
+# ============================================================
+if "focus_day" not in st.session_state:
+    st.session_state["focus_day"] = today.isoformat()
+
+focus_str = st.session_state["focus_day"]
+focus_date = date.fromisoformat(focus_str)
+is_viewing_today = focus_date == today
+
+hdr1, hdr2 = st.columns([5, 1])
+day_label = day_names[focus_date.weekday()]
+hdr1.title(f"{day_label}, {focus_date.strftime('%B %d')}")
+if is_viewing_today:
+    hdr2.link_button("Ayden Music", "https://ayden-music.onrender.com/")
+else:
+    if hdr2.button("Back to today"):
+        st.session_state["focus_day"] = today.isoformat()
+        st.rerun()
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Streak", f"{_streak} day{'s' if _streak != 1 else ''}")
+m2.metric("Activities", f"{_wk_act_done}/{_wk_act_total}" if _wk_act_total else "0")
+m3.metric("Runs", f"{_wk_run_done}/{_wk_run_total}" if _wk_run_total else "0")
+m4.metric("Reading", len(reading_books))
+
+st.divider()
+
+# --- Schedule for focused day ---
+focus_cal = [e for e in cal_events if e["date"] == focus_str
+             and not any(kw in e["title"] for kw in class_keywords)]
+focus_classes = [cls for cls in SCHOOL_SCHEDULE
+                 if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
+                 and focus_date.weekday() in cls["days"]]
+focus_acts = activities_df[activities_df["date"] == focus_str] if not activities_df.empty else pd.DataFrame()
+focus_runs = running_df[running_df["date"] == focus_date] if not running_df.empty else pd.DataFrame()
+
+has_schedule = bool(focus_cal or focus_classes or not focus_acts.empty or not focus_runs.empty)
+
+if has_schedule:
+    for event in sorted(focus_cal, key=lambda e: e["start_time"]):
+        time_label = event["start_time"]
+        if event["end_time"]:
+            time_label += f" - {event['end_time']}"
+        st.markdown(
+            f'<div style="border-left: 3px solid #e94560; padding: 4px 8px; '
+            f'margin: 2px 0; border-radius: 3px;">'
+            f'<span style="color: #e94560; font-size: 0.85em;">{time_label}</span> '
+            f'{event["title"]}</div>',
+            unsafe_allow_html=True,
+        )
+
+    for cls in focus_classes:
+        st.markdown(
+            f'<div style="border-left: 3px solid #FF6F00; padding: 4px 8px; '
+            f'margin: 2px 0; border-radius: 3px; background: rgba(255,111,0,0.08);">'
+            f'<span style="color: #FF6F00; font-size: 0.85em;">{cls["time"]}</span> '
+            f'{cls["name"]} — {cls["room"]}</div>',
+            unsafe_allow_html=True,
+        )
+
+    for _, run in focus_runs.iterrows():
+        workout = run["workout"]
+        if not isinstance(workout, str) or not workout.strip():
+            continue
+        title = workout.split("\n")[0]
+        color = ACTIVITY_TYPES["running"][1]
+        rc1, rc2 = st.columns([6, 1])
+        if run["completed"]:
+            rc1.markdown(
+                f'<div style="border-left: 3px solid {color}; padding: 4px 8px; '
+                f'margin: 2px 0; border-radius: 3px; opacity: 0.5;">'
+                f'<span style="color: {color}; font-size: 0.85em;">Running</span> '
+                f'~~{title}~~</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            rc1.markdown(
+                f'<div style="border-left: 3px solid {color}; padding: 4px 8px; '
+                f'margin: 2px 0; border-radius: 3px;">'
+                f'<span style="color: {color}; font-size: 0.85em;">Running</span> '
+                f'**{title}**</div>',
+                unsafe_allow_html=True,
+            )
+            if rc2.button("Done", key=f"focus_run_{run['id']}"):
+                update_row("running_schedule", int(run["id"]), {"completed": True})
+                st.rerun()
+
+    for _, act in focus_acts.iterrows():
+        atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
+        label_text, color = atype
+        raw_title = act.get("title")
+        title = raw_title if isinstance(raw_title, str) and raw_title.strip() else label_text
+        slot = act.get("time_slot", "")
+        time_str = TIME_DISPLAY.get(slot, slot) if isinstance(slot, str) and slot else ""
+        time_prefix = f"{time_str} " if time_str else ""
+        ac1, ac2 = st.columns([6, 1])
+        if act.get("completed"):
+            ac1.markdown(
+                f'<div style="border-left: 3px solid {color}; padding: 4px 8px; '
+                f'margin: 2px 0; border-radius: 3px; opacity: 0.5;">'
+                f'<span style="color: {color}; font-size: 0.85em;">{time_prefix}{label_text}</span> '
+                f'~~{title}~~</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            ac1.markdown(
+                f'<div style="border-left: 3px solid {color}; padding: 4px 8px; '
+                f'margin: 2px 0; border-radius: 3px;">'
+                f'<span style="color: {color}; font-size: 0.85em;">{time_prefix}{label_text}</span> '
+                f'**{title}**</div>',
+                unsafe_allow_html=True,
+            )
+            if ac2.button("Done", key=f"focus_act_{act['id']}"):
+                update_row("activities", int(act["id"]), {"completed": True})
+                st.rerun()
+else:
+    st.caption("Nothing scheduled.")
+
+# --- Currently Reading ---
+if is_viewing_today and not reading_books.empty:
+    st.markdown("")
+    st.caption("Currently Reading")
+    for _, book in reading_books.iterrows():
+        cur = int(book["current_page"]) if pd.notna(book.get("current_page")) else 0
+        total = int(book["total_pages"]) if pd.notna(book.get("total_pages")) else 0
+        line = f"**{book['title']}**"
+        if book.get("author"):
+            line += f" — {book['author']}"
+        if total > 0:
+            pct = cur / total
+            line += f" · p.{cur}/{total} ({pct:.0%})"
+        elif cur > 0:
+            line += f" · p.{cur}"
+
+        bc1, bc2, bc3 = st.columns([5, 2, 1])
+        bc1.markdown(line)
+        if total > 0:
+            bc1.progress(min(cur / total, 1.0))
+        new_page = bc2.number_input(
+            "Page", min_value=0, max_value=max(total, 9999),
+            value=cur, key=f"dash_page_{book['id']}",
+            label_visibility="collapsed",
+        )
+        if new_page != cur:
+            delta = new_page - cur
+            btn_label = f"+{delta}p" if delta > 0 else "Set"
+            if bc3.button(btn_label, key=f"dash_upd_{book['id']}"):
+                updates = {"current_page": new_page}
+                if total > 0 and new_page >= total:
+                    updates["status"] = "completed"
+                    updates["end_date"] = today.isoformat()
+                    updates["current_page"] = total
+                update_row("books", int(book["id"]), updates)
+                st.rerun()
+
+# --- Active To-Dos ---
+if is_viewing_today and not active_todos.empty:
+    PRIORITY_COLORS = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
+    st.markdown("")
+    st.caption("To Do")
+    for priority in ["high", "medium", "low"]:
+        group = active_todos[active_todos["priority"] == priority] if "priority" in active_todos.columns else pd.DataFrame()
+        for _, row in group.iterrows():
+            color = PRIORITY_COLORS.get(row.get("priority", "medium"), "#FF9800")
+            tc1, tc2 = st.columns([8, 1])
+            tc1.markdown(
+                f'<span style="border-left:3px solid {color};padding-left:8px;">'
+                f'{row["task"]}</span>',
+                unsafe_allow_html=True,
+            )
+            if tc2.button("Done", key=f"dash_todo_{row['id']}"):
+                update_row("todos", int(row["id"]), {"completed": True})
+                st.rerun()
+
+# --- Quick Add ---
+st.markdown("")
+with st.form("quick_add", clear_on_submit=True):
+    qa1, qa2, qa3, qa4 = st.columns([2, 3, 2, 1])
+    qa_type = qa1.selectbox(
+        "Type", list(ACTIVITY_TYPES.keys()),
+        format_func=lambda x: ACTIVITY_TYPES[x][0],
+        label_visibility="collapsed",
+    )
+    qa_title = qa2.text_input("Title", placeholder="Title (optional)", label_visibility="collapsed")
+    qa_date = qa3.date_input("Date", value=focus_date, label_visibility="collapsed")
+    if qa4.form_submit_button("Add"):
+        insert_row("activities", {
+            "date": qa_date.isoformat(),
+            "activity_type": qa_type,
+            "title": qa_title.strip() or None,
+            "completed": False,
+        })
+        st.rerun()
 
 
-def render_day_column(col, i, day, clickable=True):
+# ============================================================
+# THIS WEEK
+# ============================================================
+st.divider()
+
+nav1, nav2, nav3 = st.columns([1, 2, 1])
+with nav1:
+    if st.button("< Prev Week"):
+        st.session_state["planner_week_offset"] -= 1
+        st.rerun()
+with nav3:
+    if st.button("Next Week >"):
+        st.session_state["planner_week_offset"] += 1
+        st.rerun()
+with nav2:
+    label = "This Week" if week_offset == 0 else f"Week of {week_start.strftime('%b %d')}"
+    st.markdown(f"<h4 style='text-align:center; margin:0;'>{label}</h4>", unsafe_allow_html=True)
+    if week_offset != 0:
+        if st.button("Today", key="go_today"):
+            st.session_state["planner_week_offset"] = 0
+            st.rerun()
+
+
+def render_day_column(col, i, day):
     day_str = day.isoformat()
     is_today = day == today
     with col:
-        if clickable:
-            btn_label = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
-            if st.button(btn_label, key=f"sel_day_{day_str}", use_container_width=True):
-                st.session_state["focus_day"] = day_str
-                st.rerun()
-        else:
-            header = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
-            st.markdown(header)
+        btn_label = f"**{day_names[i]} {day.strftime('%m/%d')}**" if is_today else f"{day_names[i]} {day.strftime('%m/%d')}"
+        if st.button(btn_label, key=f"sel_day_{day_str}", use_container_width=True):
+            st.session_state["focus_day"] = day_str
+            st.rerun()
 
         day_cal = [e for e in cal_events if e["date"] == day_str
                    and not any(kw in e["title"] for kw in class_keywords)]
@@ -275,76 +469,12 @@ else:
     for i in range(7):
         render_day_column(cols[i], i, week_start + timedelta(days=i))
 
+
+# ============================================================
+# TOOLS
+# ============================================================
 st.divider()
 
-# --- Day Focus ---
-if "focus_day" not in st.session_state:
-    st.session_state["focus_day"] = today.isoformat()
-
-focus_str = st.session_state["focus_day"]
-focus_date = date.fromisoformat(focus_str)
-focus_weekday = day_names[focus_date.weekday()]
-
-fc1, fc2 = st.columns([6, 1])
-fc1.subheader(f"{focus_weekday} {focus_date.strftime('%B %d')}")
-if focus_str != today.isoformat():
-    if fc2.button("Back to today", key="focus_today"):
-        st.session_state["focus_day"] = today.isoformat()
-        st.rerun()
-
-focus_cal = [e for e in cal_events if e["date"] == focus_str
-             and not any(kw in e["title"] for kw in class_keywords)]
-focus_classes = [cls for cls in SCHOOL_SCHEDULE
-                 if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
-                 and focus_date.weekday() in cls["days"]]
-focus_acts = activities_df[activities_df["date"] == focus_str] if not activities_df.empty else pd.DataFrame()
-focus_runs = running_df[running_df["date"] == focus_date] if not running_df.empty else pd.DataFrame()
-
-if not focus_cal and not focus_classes and focus_acts.empty and focus_runs.empty:
-    st.info("Nothing scheduled.")
-else:
-    for event in sorted(focus_cal, key=lambda e: e["start_time"]):
-        time_label = event["start_time"]
-        if event["end_time"]:
-            time_label += f" - {event['end_time']}"
-        st.caption(f"**{time_label}** — {event['title']}")
-
-    for cls in focus_classes:
-        st.caption(f"**{cls['time']}** — {cls['name']} ({cls['room']})")
-
-    for _, run in focus_runs.iterrows():
-        workout = run["workout"]
-        if not isinstance(workout, str) or not workout.strip():
-            continue
-        title = workout.split("\n")[0]
-        rc1, rc2 = st.columns([6, 1])
-        if run["completed"]:
-            rc1.markdown(f"~~Running: {title}~~ — Done")
-        else:
-            rc1.markdown(f"**Running:** {title}")
-            if rc2.button("Done", key=f"focus_run_{run['id']}"):
-                update_row("running_schedule", int(run["id"]), {"completed": True})
-                st.rerun()
-
-    for _, act in focus_acts.iterrows():
-        atype = ACTIVITY_TYPES.get(act["activity_type"], ACTIVITY_TYPES["other"])
-        label_text, _ = atype
-        raw_title = act.get("title")
-        title = raw_title if isinstance(raw_title, str) and raw_title.strip() else label_text
-        slot = act.get("time_slot", "")
-        time_str = TIME_DISPLAY.get(slot, slot) if isinstance(slot, str) and slot else ""
-        ac1, ac2 = st.columns([6, 1])
-        if act.get("completed"):
-            ac1.markdown(f"~~{time_str + ' · ' if time_str else ''}{label_text}: {title}~~ — Done")
-        else:
-            ac1.markdown(f"**{time_str + ' · ' if time_str else ''}{label_text}:** {title}")
-            if ac2.button("Done", key=f"focus_act_{act['id']}"):
-                update_row("activities", int(act["id"]), {"completed": True})
-                st.rerun()
-
-st.divider()
-
-# --- Add Activity ---
 with st.expander("Add Activity"):
     with st.form("add_activity"):
         ac1, ac2, ac3 = st.columns(3)
@@ -374,7 +504,6 @@ with st.expander("Add Activity"):
             st.success(f"Added {ACTIVITY_TYPES[act_type][0]} on {act_date.strftime('%m/%d')}.")
             st.rerun()
 
-# --- Manage Activities ---
 if not activities_df.empty:
     with st.expander("Manage Activities"):
         week_acts = activities_df[
@@ -418,7 +547,6 @@ if not activities_df.empty:
                         st.session_state[ck] = True
                         st.rerun()
 
-# --- Plan the Week ---
 with st.expander("Plan the Week"):
     st.caption("Quickly add multiple activities for the week.")
     for i in range(7):
@@ -452,7 +580,6 @@ with st.expander("Plan the Week"):
         else:
             st.info("No activities selected.")
 
-# --- Sync to phone ---
 with st.expander("Sync to phone"):
     ICAL_FEED_URL = f"{st.secrets['SUPABASE_URL']}/storage/v1/object/public/ical/training_plan.ics"
 
@@ -546,168 +673,9 @@ with st.expander("Sync to phone"):
     st.code(webcal_url, language=None)
     st.caption("Add this URL as a calendar subscription on your phone. It refreshes automatically.")
 
-st.divider()
-
-# --- Books ---
-st.subheader("Books")
-try:
-    book_data = fetch_all("books")
-    if book_data:
-        bdf = pd.DataFrame(book_data)
-        reading_books = bdf[bdf["status"] == "reading"]
-        completed_books = bdf[bdf["status"] == "completed"]
-        b1, b2, b3 = st.columns(3)
-        b1.metric("Reading", len(reading_books))
-        b2.metric("Completed", len(completed_books))
-        b3.metric("Want to Read", len(bdf[bdf["status"] == "want_to_read"]))
-        for _, book in reading_books.iterrows():
-            line = f"**{book['title']}**"
-            if book.get("author"):
-                line += f" — {book['author']}"
-            st.caption(line)
-    else:
-        st.info("No books logged yet.")
-except Exception:
-    st.info("No books logged yet.")
-
-st.divider()
-
-# --- Rhymes ---
-st.subheader("Rhymes")
-try:
-    rhyme_data = fetch_all("rhymes")
-    if rhyme_data:
-        rdf = pd.DataFrame(rhyme_data)
-        r1, r2 = st.columns(2)
-        r1.metric("Words", len(rdf))
-        r2.metric("Groups", rdf["rhyme_group"].nunique())
-    else:
-        st.info("No rhyme data loaded.")
-except Exception:
-    st.info("No rhyme data loaded.")
-
-st.divider()
-
-# --- CFB Dynasty ---
-cfb_games = fetch_games("cfb")
-madden_games = fetch_games("madden")
-
-all_picks = []
-for game, pfx in cfb_games.items():
-    try:
-        data = fetch_all(f"{pfx}_draft_picks")
-        for r in data:
-            r["game"] = game
-        all_picks.extend(data)
-    except Exception:
-        pass
-picks_df = pd.DataFrame(all_picks) if all_picks else pd.DataFrame()
-
-all_seasons = []
-all_wins = []
-for game, pfx in madden_games.items():
-    try:
-        sdata = fetch_all(f"{pfx}_seasons")
-        for r in sdata:
-            r["game"] = game
-        all_seasons.extend(sdata)
-    except Exception:
-        pass
-    try:
-        wdata = fetch_all(f"{pfx}_team_wins")
-        for r in wdata:
-            r["game"] = game
-        all_wins.extend(wdata)
-    except Exception:
-        pass
-seasons_df = pd.DataFrame(all_seasons) if all_seasons else pd.DataFrame()
-wins_df = pd.DataFrame(all_wins) if all_wins else pd.DataFrame()
-
-st.subheader("CFB Dynasty")
-
-if not picks_df.empty:
-    cfb_m1, cfb_m2, cfb_m3, cfb_m4 = st.columns(4)
-    cfb_m1.metric("Total Picks", len(picks_df))
-    first_rd = picks_df[picks_df["round"] == "1st"]
-    cfb_m2.metric("1st Rounders", len(first_rd))
-    cfb_m3.metric("Draft Classes", picks_df["year"].nunique())
-    top_pos = picks_df["position"].value_counts().idxmax() if "position" in picks_df.columns else "—"
-    cfb_m4.metric("Top Position", top_pos)
-
-    with st.expander("Details"):
-        cfb_left, cfb_right = st.columns(2)
-        with cfb_left:
-            st.markdown("**1st Round Picks**")
-            if not first_rd.empty:
-                display = first_rd[["game", "name", "position", "year", "school"]].rename(
-                    columns={"game": "Game", "name": "Name", "position": "Pos", "year": "Year", "school": "School"}
-                ).sort_values("Year", ascending=False)
-                st.dataframe(display, use_container_width=True, hide_index=True)
-            else:
-                st.caption("No 1st rounders yet.")
-        with cfb_right:
-            st.markdown("**Picks by Round**")
-            by_round = picks_df.groupby("round").size().reset_index(name="count")
-            by_round["round"] = pd.Categorical(by_round["round"], categories=ROUND_ORDER, ordered=True)
-            by_round = by_round.sort_values("round").dropna(subset=["round"])
-            st.bar_chart(by_round.set_index("round")["count"])
-else:
-    st.info("No CFB draft data loaded.")
-
-st.divider()
-
-# --- Madden Franchise ---
-st.subheader("Madden Franchise")
-
-if not seasons_df.empty:
-    mad_m1, mad_m2, mad_m3, mad_m4 = st.columns(4)
-    mad_m1.metric("Seasons Recorded", len(seasons_df))
-    franchises = seasons_df.groupby(["game", "franchise"]).ngroups
-    mad_m2.metric("Franchises", franchises)
-    sb_counts = seasons_df["sb_winner"].dropna().value_counts()
-    if not sb_counts.empty:
-        mad_m3.metric("Most SB Wins", f"{sb_counts.index[0]} ({sb_counts.iloc[0]})")
-    else:
-        mad_m3.metric("Most SB Wins", "—")
-    mvp_counts = seasons_df["nfl_mvp"].dropna().value_counts()
-    if not mvp_counts.empty:
-        mad_m4.metric("Most MVPs", f"{mvp_counts.index[0]} ({mvp_counts.iloc[0]})")
-    else:
-        mad_m4.metric("Most MVPs", "—")
-
-    with st.expander("Details"):
-        mad_left, mad_right = st.columns(2)
-        with mad_left:
-            st.markdown("**Award Leaders**")
-            leaders = []
-            for col_name, lbl in AWARD_COLS.items():
-                if col_name in seasons_df.columns:
-                    counts = seasons_df[col_name].dropna().value_counts()
-                    if not counts.empty:
-                        leaders.append({"Award": lbl, "Leader": counts.index[0], "Times": counts.iloc[0]})
-            if leaders:
-                st.dataframe(pd.DataFrame(leaders), use_container_width=True, hide_index=True)
-            else:
-                st.caption("No award data yet.")
-        with mad_right:
-            st.markdown("**Top Teams by Wins (All-Time)**")
-            if not wins_df.empty:
-                wins_df["wins"] = pd.to_numeric(wins_df["wins"], errors="coerce")
-                top_teams = wins_df.groupby("team")["wins"].sum().sort_values(ascending=False).head(10)
-                top_display = top_teams.reset_index()
-                top_display["team_name"] = top_display["team"].map(
-                    lambda t: f"{t} ({NFL_COLORS[t][2]})" if t in NFL_COLORS else t
-                )
-                st.bar_chart(top_display.set_index("team_name")["wins"])
-            else:
-                st.caption("No team win data yet.")
-else:
-    st.info("No Madden data loaded.")
-
-# --- Year in Review ---
 with st.expander(f"{today.year} in Review"):
     _year_start = date(today.year, 1, 1).isoformat()
-    yr1, yr2, yr3, yr4 = st.columns(4)
+    yr1, yr2, yr3 = st.columns(3)
 
     _yr_act_count = 0
     if not activities_df.empty:
@@ -722,22 +690,18 @@ with st.expander(f"{today.year} in Review"):
         _yr_run_count = len(_yr_runs_real[_yr_runs_real["completed"] == True])
     yr2.metric("Run Workouts", _yr_run_count)
 
-    try:
-        _yr_bdata = fetch_all("books", filters={"status": "completed"})
-        _yr_bdf = pd.DataFrame(_yr_bdata) if _yr_bdata else pd.DataFrame()
-        if not _yr_bdf.empty and "end_date" in _yr_bdf.columns:
-            _yr_finished = _yr_bdf[_yr_bdf["end_date"].fillna("") >= _year_start]
+    if not books_df.empty:
+        completed_books = books_df[books_df["status"] == "completed"]
+        if not completed_books.empty and "end_date" in completed_books.columns:
+            _yr_finished = completed_books[completed_books["end_date"].fillna("") >= _year_start]
             yr3.metric("Books Read", len(_yr_finished))
             _yr_pages = int(_yr_finished["total_pages"].dropna().sum()) if "total_pages" in _yr_finished.columns else 0
             if _yr_pages > 0:
                 yr3.caption(f"{_yr_pages:,} pages")
         else:
             yr3.metric("Books Read", 0)
-    except Exception:
+    else:
         yr3.metric("Books Read", 0)
-
-    _yr_data = len(picks_df) + len(seasons_df)
-    yr4.metric("Game Records", _yr_data)
 
     if not activities_df.empty:
         _yr_all = activities_df[(activities_df["date"] >= _year_start) & (activities_df["completed"] == True)]
