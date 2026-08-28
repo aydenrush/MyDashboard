@@ -717,68 +717,157 @@ else:
 
         with _log_bulk:
             st.caption(
-                "Upload multiple .gpx files at once — e.g., from a Strava archive "
-                "(Settings > My Account > Request Your Archive)."
+                "Import from a Strava archive: Settings > My Account > "
+                "Request Your Archive. Upload the **activities.csv** from the ZIP, "
+                "or drop multiple **.gpx** files."
             )
-            bulk_files = st.file_uploader(
-                "Upload .gpx files", type=["gpx"], accept_multiple_files=True, key="bulk_gpx",
+            _bulk_fmt = st.radio(
+                "Format", ["Strava CSV", "GPX Files"], horizontal=True,
+                label_visibility="collapsed", key="bulk_fmt",
             )
-            if bulk_files:
-                _existing_dates = set()
-                if not _rl_df.empty:
-                    _existing_dates = set(_rl_df["date"].apply(lambda d: d.isoformat()).tolist())
 
-                _previews = []
-                _errors = []
-                for _bf in bulk_files:
-                    try:
-                        parsed = _parse_gpx(_bf.read())
-                        if parsed:
-                            _skip = parsed["date"].isoformat() in _existing_dates
-                            _previews.append((parsed, _bf.name, _skip))
-                        else:
-                            _errors.append(f"{_bf.name}: no GPS data")
-                    except Exception as e:
-                        _errors.append(f"{_bf.name}: {e}")
+            if _bulk_fmt == "Strava CSV":
+                _csv_file = st.file_uploader(
+                    "Upload activities.csv", type=["csv"], key="strava_csv",
+                )
+                if _csv_file is not None:
+                    import csv
+                    import io
 
-                _new = [p for p in _previews if not p[2]]
-                _dupes = [p for p in _previews if p[2]]
+                    _text = _csv_file.read().decode("utf-8")
+                    _reader = csv.DictReader(io.StringIO(_text))
+                    _all_rows = list(_reader)
+                    _runs = [r for r in _all_rows if r.get("Activity Type") == "Run"]
 
-                if _new:
-                    st.markdown(f"**{len(_new)} new runs to import:**")
-                    for parsed, fname, _ in _new:
-                        st.caption(
-                            f"{parsed['date'].strftime('%a %m/%d')} — "
-                            f"{parsed['distance_miles']:.2f} mi · "
-                            f"{_fmt_duration(parsed['duration_seconds'])} · "
-                            f"{_fmt_pace(parsed['pace_seconds'])}"
-                        )
-                if _dupes:
-                    st.caption(f"{len(_dupes)} already logged (skipping)")
-                for _e in _errors:
-                    st.caption(f"Error: {_e}")
+                    _existing_dates = set()
+                    if not _rl_df.empty:
+                        _existing_dates = set(_rl_df["date"].apply(lambda d: d.isoformat()).tolist())
 
-                if _new and st.button(f"Import {len(_new)} runs", key="bulk_import"):
-                    _imported = 0
-                    for parsed, fname, _ in _new:
-                        insert_row("run_logs", {
-                            "date": parsed["date"].isoformat(),
-                            "distance_miles": parsed["distance_miles"],
-                            "duration_seconds": parsed["duration_seconds"],
-                            "pace_seconds": parsed["pace_seconds"],
-                            "elevation_gain_ft": parsed["elevation_gain_ft"],
-                            "splits": parsed["splits"],
-                            "route_name": parsed["route_name"],
-                            "source": "gpx",
-                        })
-                        if _has_data:
-                            _sched = df[df["date"] == parsed["date"]]
-                            for _, _sr in _sched.iterrows():
-                                if not _sr["completed"]:
-                                    update_row("running_schedule", int(_sr["id"]), {"completed": True})
-                        _imported += 1
-                    st.success(f"Imported {_imported} runs!")
-                    st.rerun()
+                    _csv_parsed = []
+                    _csv_skipped = 0
+                    _csv_errors = 0
+                    for _cr in _runs:
+                        try:
+                            _raw_date = _cr.get("Activity Date", "")
+                            _dt = datetime.strptime(_raw_date, "%b %d, %Y, %I:%M:%S %p")
+                            _d_iso = _dt.date().isoformat()
+
+                            _dist_m = float(_cr.get("Distance") or 0)
+                            _time_s = float(_cr.get("Moving Time") or 0)
+                            if _dist_m <= 0:
+                                _csv_errors += 1
+                                continue
+
+                            _dist_mi = round(_dist_m / 1609.344, 2)
+                            _elev_m = float(_cr.get("Elevation Gain") or 0)
+                            _elev_ft = round(_elev_m * 3.28084)
+                            _pace = int(_time_s / _dist_mi) if _dist_mi > 0 and _time_s > 0 else None
+                            _name = _cr.get("Activity Name") or None
+                            _desc = _cr.get("Activity Description") or None
+                            _notes = _desc.strip() if _desc and _desc.strip() else None
+
+                            if _d_iso in _existing_dates:
+                                _csv_skipped += 1
+                                continue
+
+                            _csv_parsed.append({
+                                "date": _d_iso,
+                                "distance_miles": _dist_mi,
+                                "duration_seconds": int(_time_s) if _time_s > 0 else None,
+                                "pace_seconds": _pace,
+                                "elevation_gain_ft": _elev_ft if _elev_ft > 0 else None,
+                                "route_name": _name,
+                                "notes": _notes,
+                                "source": "strava",
+                            })
+                        except Exception:
+                            _csv_errors += 1
+
+                    st.markdown(
+                        f"**{len(_csv_parsed)} new runs** from {len(_runs)} total "
+                        f"({_csv_skipped} already logged"
+                        f"{f', {_csv_errors} errors' if _csv_errors else ''})"
+                    )
+
+                    if _csv_parsed:
+                        _csv_sorted = sorted(_csv_parsed, key=lambda r: r["date"], reverse=True)
+                        for _cr in _csv_sorted[:10]:
+                            _cd = date.fromisoformat(_cr["date"])
+                            st.caption(
+                                f"{_cd.strftime('%a %m/%d/%y')} — "
+                                f"{_cr['distance_miles']:.2f} mi · "
+                                f"{_fmt_duration(_cr['duration_seconds'])} · "
+                                f"{_fmt_pace(_cr['pace_seconds'])}"
+                                f"{' · ' + _cr['route_name'] if _cr.get('route_name') else ''}"
+                            )
+                        if len(_csv_parsed) > 10:
+                            st.caption(f"... and {len(_csv_parsed) - 10} more")
+
+                        if st.button(f"Import {len(_csv_parsed)} runs", key="csv_import"):
+                            insert_rows("run_logs", _csv_parsed)
+                            st.success(f"Imported {len(_csv_parsed)} runs!")
+                            st.rerun()
+
+            else:
+                bulk_files = st.file_uploader(
+                    "Upload .gpx files", type=["gpx"], accept_multiple_files=True, key="bulk_gpx",
+                )
+                if bulk_files:
+                    _existing_dates = set()
+                    if not _rl_df.empty:
+                        _existing_dates = set(_rl_df["date"].apply(lambda d: d.isoformat()).tolist())
+
+                    _previews = []
+                    _errors = []
+                    for _bf in bulk_files:
+                        try:
+                            parsed = _parse_gpx(_bf.read())
+                            if parsed:
+                                _skip = parsed["date"].isoformat() in _existing_dates
+                                _previews.append((parsed, _bf.name, _skip))
+                            else:
+                                _errors.append(f"{_bf.name}: no GPS data")
+                        except Exception as e:
+                            _errors.append(f"{_bf.name}: {e}")
+
+                    _new = [p for p in _previews if not p[2]]
+                    _dupes = [p for p in _previews if p[2]]
+
+                    if _new:
+                        st.markdown(f"**{len(_new)} new runs to import:**")
+                        for parsed, fname, _ in _new:
+                            st.caption(
+                                f"{parsed['date'].strftime('%a %m/%d')} — "
+                                f"{parsed['distance_miles']:.2f} mi · "
+                                f"{_fmt_duration(parsed['duration_seconds'])} · "
+                                f"{_fmt_pace(parsed['pace_seconds'])}"
+                            )
+                    if _dupes:
+                        st.caption(f"{len(_dupes)} already logged (skipping)")
+                    for _e in _errors:
+                        st.caption(f"Error: {_e}")
+
+                    if _new and st.button(f"Import {len(_new)} runs", key="bulk_import"):
+                        _imported = 0
+                        for parsed, fname, _ in _new:
+                            insert_row("run_logs", {
+                                "date": parsed["date"].isoformat(),
+                                "distance_miles": parsed["distance_miles"],
+                                "duration_seconds": parsed["duration_seconds"],
+                                "pace_seconds": parsed["pace_seconds"],
+                                "elevation_gain_ft": parsed["elevation_gain_ft"],
+                                "splits": parsed["splits"],
+                                "route_name": parsed["route_name"],
+                                "source": "gpx",
+                            })
+                            if _has_data:
+                                _sched = df[df["date"] == parsed["date"]]
+                                for _, _sr in _sched.iterrows():
+                                    if not _sr["completed"]:
+                                        update_row("running_schedule", int(_sr["id"]), {"completed": True})
+                            _imported += 1
+                        st.success(f"Imported {_imported} runs!")
+                        st.rerun()
 
         with _log_manual:
             with st.form("manual_run", clear_on_submit=True):
