@@ -10,7 +10,9 @@ from constants import ACTIVITY_TYPES
 st.set_page_config(page_title="Training", layout="wide")
 require_login()
 
-st.title("Training")
+_t1, _t2 = st.columns([6, 1])
+_t1.title("Training")
+_t2.link_button("Strava", "https://www.strava.com/dashboard")
 
 try:
     data = fetch_all("running_schedule", order_col="date")
@@ -355,8 +357,8 @@ else:
                     _sp_strs.append(f"{_lbl}: {_sm}:{_ss:02d}")
                 st.caption(" | ".join(_sp_strs))
 
-            if _run.get("notes"):
-                st.caption(_run["notes"])
+            if pd.notna(_run.get("notes")) and str(_run.get("notes", "")).strip():
+                st.caption(str(_run["notes"]))
 
         if len(_rl_sorted) > 5:
             with st.expander(f"All Runs ({len(_rl_sorted)})"):
@@ -790,18 +792,25 @@ else:
                     )
 
                     if _csv_parsed:
-                        _csv_sorted = sorted(_csv_parsed, key=lambda r: r["date"], reverse=True)
-                        for _cr in _csv_sorted[:10]:
-                            _cd = date.fromisoformat(_cr["date"])
-                            st.caption(
-                                f"{_cd.strftime('%a %m/%d/%y')} — "
-                                f"{_cr['distance_miles']:.2f} mi · "
-                                f"{_fmt_duration(_cr['duration_seconds'])} · "
-                                f"{_fmt_pace(_cr['pace_seconds'])}"
-                                f"{' · ' + _cr['route_name'] if _cr.get('route_name') else ''}"
-                            )
-                        if len(_csv_parsed) > 10:
-                            st.caption(f"... and {len(_csv_parsed) - 10} more")
+                        _by_year = {}
+                        for _cr in _csv_parsed:
+                            _yr = _cr["date"][:4]
+                            _by_year.setdefault(_yr, []).append(_cr)
+                        for _yr in sorted(_by_year, reverse=True):
+                            _yr_runs = _by_year[_yr]
+                            _yr_miles = sum(r["distance_miles"] for r in _yr_runs)
+                            st.markdown(f"**{_yr}** — {len(_yr_runs)} runs, {_yr_miles:.0f} mi")
+                            for _cr in sorted(_yr_runs, key=lambda r: r["date"], reverse=True)[:3]:
+                                _cd = date.fromisoformat(_cr["date"])
+                                st.caption(
+                                    f"  {_cd.strftime('%b %d')} — "
+                                    f"{_cr['distance_miles']:.2f} mi · "
+                                    f"{_fmt_duration(_cr['duration_seconds'])} · "
+                                    f"{_fmt_pace(_cr['pace_seconds'])}"
+                                    f"{' · ' + _cr['route_name'] if _cr.get('route_name') else ''}"
+                                )
+                            if len(_yr_runs) > 3:
+                                st.caption(f"  ... +{len(_yr_runs) - 3} more")
 
                         if st.button(f"Import {len(_csv_parsed)} runs", key="csv_import"):
                             insert_rows("run_logs", _csv_parsed)
