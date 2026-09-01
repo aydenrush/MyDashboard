@@ -535,6 +535,95 @@ if _paste.strip():
                 x="Bar", y="Syllables", color="#FF6B35",
             )
 
+        with st.expander("Literary Devices"):
+            _dev_sections = []
+
+            _sim_hits = []
+            for i, bar in enumerate(_bars):
+                for m in re.finditer(r'\blike\b', bar, re.IGNORECASE):
+                    ctx = bar[max(0, m.start() - 20):m.end() + 30].strip()
+                    _sim_hits.append((i + 1, ctx))
+            if _sim_hits:
+                _dev_sections.append("**Similes**")
+                for bnum, ctx in _sim_hits:
+                    _dev_sections.append(f"- Bar {bnum}: *\"...{ctx}...\"*")
+
+            _al_hits = []
+            for i, bar in enumerate(_bars):
+                words = [w for w in re.findall(r"[a-zA-Z']+", bar)
+                         if w.lower().strip("'") not in _STOP_WORDS and len(w) > 1]
+                starts = defaultdict(list)
+                for w in words:
+                    starts[w[0].lower()].append(w)
+                for letter, ws in starts.items():
+                    if len(ws) >= 3:
+                        _al_hits.append((i + 1, letter.upper(), ws))
+            if _al_hits:
+                _dev_sections.append("**Alliteration**")
+                for bnum, letter, ws in _al_hits:
+                    _dev_sections.append(f"- Bar {bnum} ({letter}): {', '.join(ws)}")
+
+            _con_hits = []
+            for i, bar in enumerate(_bars):
+                words = [w.lower().strip("'") for w in re.findall(r"[a-zA-Z']+", bar)
+                         if w.lower().strip("'") not in _STOP_WORDS and len(w) > 1]
+                cons = defaultdict(list)
+                for w in words:
+                    phones = pronouncing.phones_for_word(w)
+                    if phones:
+                        seen = set()
+                        for ph in phones[0].split():
+                            c = re.sub(r'\d', '', ph)
+                            if c not in _VOWEL_PHONES and c not in seen:
+                                cons[c].append(w)
+                                seen.add(c)
+                for sound, ws in cons.items():
+                    if len(ws) >= 3:
+                        unique = list(dict.fromkeys(ws))
+                        _con_hits.append((i + 1, sound, unique))
+            if _con_hits:
+                _dev_sections.append("**Consonance**")
+                for bnum, sound, ws in _con_hits:
+                    _dev_sections.append(f"- Bar {bnum} (/{sound}/): {', '.join(ws)}")
+
+            _ms_hits = []
+            for (bi, s, e), ci in _cmap.items():
+                text = _bars[bi][s:e]
+                if " " in text:
+                    _ms_hits.append((bi + 1, text))
+                    continue
+                phones = pronouncing.phones_for_word(text.lower())
+                if phones:
+                    rp = pronouncing.rhyming_part(phones[0])
+                    rp_syls = sum(1 for ph in rp.split() if any(c.isdigit() for c in ph))
+                    if rp_syls >= 2:
+                        _ms_hits.append((bi + 1, text))
+            if _ms_hits:
+                _dev_sections.append("**Multisyllabic Rhymes**")
+                _ms_by_bar = defaultdict(list)
+                for bnum, word in _ms_hits:
+                    _ms_by_bar[bnum].append(word)
+                for bnum in sorted(_ms_by_bar):
+                    _dev_sections.append(f"- Bar {bnum}: {', '.join(_ms_by_bar[bnum])}")
+
+            _asson_clusters = defaultdict(list)
+            for (bi, s, e), ci in _cmap.items():
+                word = _bars[bi][s:e].lower().strip("'")
+                if " " not in word:
+                    sv = _stressed_vowel(word)
+                    if sv:
+                        _asson_clusters[sv].append(word)
+            _asson_show = {v: list(dict.fromkeys(ws)) for v, ws in _asson_clusters.items() if len(set(ws)) >= 3}
+            if _asson_show:
+                _dev_sections.append("**Assonance (vowel patterns)**")
+                for vowel, ws in sorted(_asson_show.items(), key=lambda x: -len(x[1])):
+                    _dev_sections.append(f"- /{vowel}/: {', '.join(ws[:12])}")
+
+            if _dev_sections:
+                st.markdown("\n".join(_dev_sections))
+            else:
+                st.caption("No notable devices detected.")
+
         _unrhymed = []
         for i, bar in enumerate(_bars):
             lw = _last_word(bar)
