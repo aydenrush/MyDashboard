@@ -108,10 +108,25 @@ def _find_rhymes(word, rdf):
     return combined
 
 
+def _stressed_vowel(word):
+    phones = pronouncing.phones_for_word(word.lower())
+    if not phones:
+        return None
+    for ph in reversed(phones[0].split()):
+        if any(c.isdigit() for c in ph):
+            return re.sub(r'\d', '', ph)
+    return None
+
+
 def _words_rhyme(a, b):
     if a == b:
         return True
-    return a in pronouncing.rhymes(b)
+    if a in pronouncing.rhymes(b):
+        return True
+    va, vb = _stressed_vowel(a), _stressed_vowel(b)
+    if va and vb and va == vb:
+        return True
+    return False
 
 
 def _detect_scheme(lines, rdf):
@@ -153,24 +168,27 @@ _STOP_WORDS = frozenset({
 })
 
 
-def _rate_verse(bars, density, internal_n, avg_syl):
+def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
     n = len(bars)
     if n == 0:
         return 0.0, "?"
     rhyme_sc = min(density / 100, 1.0) * 10
     int_per_bar = internal_n / n
-    internal_sc = min(int_per_bar / 2, 1.0) * 10
+    internal_sc = min(int_per_bar / 1.0, 1.0) * 10
     syls = [_line_syllables(b) for b in bars]
     mean_s = sum(syls) / n
     var = sum((s - mean_s) ** 2 for s in syls) / n
     std = var ** 0.5
     cv = std / mean_s if mean_s > 0 else 1
-    flow_sc = max(0, (1 - cv) * 10)
+    flow_sc = max(0, (1 - cv * 0.5)) * 10
     words = sum(len(b.split()) for b in bars)
     syl_total = sum(syls)
     syl_per_word = syl_total / words if words > 0 else 1
-    vocab_sc = min((syl_per_word - 1) / 0.8, 1.0) * 10
-    raw = rhyme_sc * 0.30 + internal_sc * 0.25 + flow_sc * 0.25 + vocab_sc * 0.20
+    vocab_sc = min((syl_per_word - 1) / 0.7, 1.0) * 10
+    n_clusters = len(set(cmap.values())) if cmap else 0
+    cluster_sc = min(n_clusters / max(n * 0.4, 1), 1.0) * 10
+    raw = (rhyme_sc * 0.20 + internal_sc * 0.30 + flow_sc * 0.15
+           + vocab_sc * 0.15 + cluster_sc * 0.20)
     score = max(0, min(10, raw))
     if score >= 9:
         grade = "S"
@@ -207,6 +225,10 @@ def _build_rhyme_map(bars, rdf):
         rk = _rhyme_key(occ[3])
         if rk:
             by_key[rk].append(occ)
+    for occ in occs:
+        sv = _stressed_vowel(occ[3])
+        if sv:
+            by_key[f"_sl{sv}"].append(occ)
     if not rdf.empty:
         w2g = defaultdict(set)
         for _, row in rdf.iterrows():
@@ -216,10 +238,13 @@ def _build_rhyme_map(bars, rdf):
                 by_key[f"_db{gid}"].append(occ)
 
     raw = []
-    for members in by_key.values():
+    for key, members in by_key.items():
         unique = set(m[3] for m in members)
         bars_hit = set(m[0] for m in members)
-        if len(unique) >= 2 or (len(members) >= 2 and len(bars_hit) >= 2):
+        if key.startswith("_sl"):
+            if len(unique) >= 3 and len(bars_hit) >= 2:
+                raw.append(set(members))
+        elif len(unique) >= 2 or (len(members) >= 2 and len(bars_hit) >= 2):
             raw.append(set(members))
 
     changed = True
@@ -331,7 +356,7 @@ if _paste.strip():
                 _last_word_pos.add((_bi_m, _mts[-1].start(), _mts[-1].end()))
         _internal_n = sum(1 for pos in _cmap if pos not in _last_word_pos)
 
-        _score, _grade = _rate_verse(_bars, _density, _internal_n, _avg)
+        _score, _grade = _rate_verse(_bars, _density, _internal_n, _avg, _cmap)
         _grade_clrs = {"S": "#FFD700", "A": "#4CAF50", "B": "#2196F3", "C": "#FF9800", "D": "#F44336", "F": "#9E9E9E"}
         _gclr = _grade_clrs.get(_grade, "#666")
 
