@@ -16,7 +16,6 @@ except Exception:
 df = pd.DataFrame(data)
 
 active = df[df["completed"] == False] if not df.empty else pd.DataFrame()
-done = df[df["completed"] == True] if not df.empty else pd.DataFrame()
 
 # --- Add task ---
 with st.form("add_todo", clear_on_submit=True):
@@ -27,6 +26,10 @@ with st.form("add_todo", clear_on_submit=True):
     if submitted and task.strip():
         insert_row(TABLE, {"task": task.strip(), "priority": priority, "completed": False})
         st.rerun()
+
+if not active.empty:
+    _all_tasks = "\n".join(f"- [{r['priority'].upper()}] {r['task']}" for _, r in active.iterrows())
+    st.code(_all_tasks, language=None)
 
 st.divider()
 
@@ -40,28 +43,38 @@ else:
             continue
         for _, row in group.iterrows():
             color = PRIORITY_COLORS.get(row.get("priority", "medium"), "#FF9800")
-            c1, c2, c3 = st.columns([1, 10, 1])
-            if c1.button("✅", key=f"done_{row['id']}"):
-                update_row(TABLE, int(row["id"]), {"completed": True})
-                st.rerun()
-            c2.markdown(
-                f'<span style="border-left:3px solid {color};padding-left:8px;">'
-                f'{row["task"]}</span>',
-                unsafe_allow_html=True,
-            )
-            if c3.button("\U0001F5D1", key=f"del_{row['id']}"):
-                delete_row(TABLE, row["id"])
-                st.rerun()
+            _editing = st.session_state.get(f"edit_{row['id']}", False)
 
-# --- Completed ---
-if not done.empty:
-    with st.expander(f"Completed ({len(done)})"):
-        for _, row in done.iterrows():
-            c1, c2, c3 = st.columns([1, 10, 1])
-            if c1.button("↩", key=f"undo_{row['id']}"):
-                update_row(TABLE, int(row["id"]), {"completed": False})
-                st.rerun()
-            c2.markdown(f"~~{row['task']}~~")
-            if c3.button("\U0001F5D1", key=f"deld_{row['id']}"):
-                delete_row(TABLE, row["id"])
-                st.rerun()
+            if _editing:
+                with st.form(key=f"editform_{row['id']}"):
+                    ec1, ec2 = st.columns([8, 2])
+                    _new_task = ec1.text_input("Task", value=row["task"], label_visibility="collapsed")
+                    _new_pri = ec2.selectbox(
+                        "Priority", ["high", "medium", "low"],
+                        index=["high", "medium", "low"].index(row.get("priority", "medium")),
+                        label_visibility="collapsed",
+                    )
+                    sc1, sc2 = st.columns(2)
+                    if sc1.form_submit_button("Save"):
+                        update_row(TABLE, int(row["id"]), {"task": _new_task.strip(), "priority": _new_pri})
+                        st.session_state[f"edit_{row['id']}"] = False
+                        st.rerun()
+                    if sc2.form_submit_button("Cancel"):
+                        st.session_state[f"edit_{row['id']}"] = False
+                        st.rerun()
+            else:
+                c1, c2, c3, c4 = st.columns([1, 9, 1, 1])
+                if c1.button("✅", key=f"done_{row['id']}"):
+                    delete_row(TABLE, int(row["id"]))
+                    st.rerun()
+                c2.markdown(
+                    f'<span style="border-left:3px solid {color};padding-left:8px;">'
+                    f'{row["task"]}</span>',
+                    unsafe_allow_html=True,
+                )
+                if c3.button("✏️", key=f"ed_{row['id']}"):
+                    st.session_state[f"edit_{row['id']}"] = True
+                    st.rerun()
+                if c4.button("\U0001F5D1", key=f"del_{row['id']}"):
+                    delete_row(TABLE, row["id"])
+                    st.rerun()
