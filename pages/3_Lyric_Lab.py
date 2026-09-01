@@ -113,7 +113,7 @@ def _stressed_vowel(word):
     if not phones:
         return None
     for ph in reversed(phones[0].split()):
-        if any(c.isdigit() for c in ph):
+        if '1' in ph or '2' in ph:
             return re.sub(r'\d', '', ph)
     return None
 
