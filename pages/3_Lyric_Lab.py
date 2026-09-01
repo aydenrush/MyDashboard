@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import pronouncing
+import pyphen
 from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -33,6 +34,79 @@ SCHEME_COLORS = [
     "#9C27B0", "#00BCD4", "#FF5722", "#8BC34A",
     "#E91E63", "#3F51B5", "#CDDC39", "#795548",
 ]
+
+
+_hyph = pyphen.Pyphen(lang='en_US')
+
+
+def _syllabify(text):
+    return re.sub(r"[a-zA-Z']+", lambda m: _hyph.inserted(m.group()).replace('-', '·'), text)
+
+
+def _build_syllable_map(bars):
+    occs = []
+    for bi, bar in enumerate(bars):
+        for m in re.finditer(r"[a-zA-Z']+", bar):
+            word = m.group()
+            w_clean = word.lower().strip("'")
+            if not w_clean or len(w_clean) <= 1 or w_clean in _STOP_WORDS:
+                continue
+            syls = _hyph.inserted(word).split('-')
+            phones = pronouncing.phones_for_word(w_clean)
+            if not phones:
+                continue
+            vowels = []
+            for ph in phones[0].split():
+                if any(c.isdigit() for c in ph):
+                    vowels.append((re.sub(r'\d', '', ph), '1' in ph or '2' in ph))
+            pos = m.start()
+            for si, syl in enumerate(syls):
+                se = pos + len(syl)
+                if si < len(vowels):
+                    vowel, stressed = vowels[si]
+                    if stressed and len(syl) > 1:
+                        occs.append((bi, pos, se, syl.lower(), vowel))
+                pos = se
+    by_vowel = defaultdict(list)
+    for occ in occs:
+        by_vowel[occ[4]].append(occ)
+    raw = []
+    for members in by_vowel.values():
+        unique = set(m[3] for m in members)
+        bars_hit = set(m[0] for m in members)
+        if len(unique) >= 3 and len(bars_hit) >= 2:
+            raw.append(set(members))
+    smap = {}
+    for ci, cluster in enumerate(raw):
+        for bi, s, e, text, vowel in cluster:
+            smap[(bi, s, e)] = ci
+    return smap
+
+
+def _render_syl_bar(bar, bar_idx, smap):
+    parts = []
+    last_end = 0
+    for m in re.finditer(r"[a-zA-Z']+", bar):
+        if m.start() > last_end:
+            parts.append(bar[last_end:m.start()])
+        word = m.group()
+        syls = _hyph.inserted(word).split('-')
+        syl_htmls = []
+        pos = m.start()
+        for syl in syls:
+            se = pos + len(syl)
+            key = (bar_idx, pos, se)
+            if key in smap:
+                clr = SCHEME_COLORS[smap[key] % len(SCHEME_COLORS)]
+                syl_htmls.append(f'<span style="color:{clr};font-weight:700;">{syl}</span>')
+            else:
+                syl_htmls.append(syl)
+            pos = se
+        parts.append('·'.join(syl_htmls))
+        last_end = m.end()
+    if last_end < len(bar):
+        parts.append(bar[last_end:])
+    return ''.join(parts)
 
 
 # ---------- helpers ----------
@@ -462,6 +536,7 @@ if _paste.strip():
 
         _scheme = _detect_scheme(_bars, rhyme_df)
         _cmap = _build_rhyme_map(_bars, rhyme_df)
+        _smap = _build_syllable_map(_bars)
         _rhy_n = sum(1 for l in _scheme if _scheme.count(l) > 1 and l != "-") if _scheme else 0
         _density = _rhy_n / len(_scheme) * 100 if _scheme else 0
 
@@ -497,24 +572,29 @@ if _paste.strip():
         t6.metric("Conson.", _extras["consonance"])
         t7.metric("Unique", f"{_extras['unique']:.0%}")
 
+        _syl_mode = st.checkbox("Show syllables", key="syl_toggle")
+
         for i, bar in enumerate(_bars):
             _s = _line_syllables(bar)
             _lbl = _scheme[i] if i < len(_scheme) else "-"
             _ci = ord(_lbl) - 65 if _lbl != "-" else -1
             _lclr = SCHEME_COLORS[_ci % len(SCHEME_COLORS)] if _ci >= 0 else "#666"
 
-            _hl = sorted([(s, e, c) for (b, s, e), c in _cmap.items() if b == i])
-            _parts = []
-            _pos = 0
-            for _hs, _he, _hc in _hl:
-                if _hs > _pos:
-                    _parts.append(bar[_pos:_hs])
-                _hclr = SCHEME_COLORS[_hc % len(SCHEME_COLORS)]
-                _parts.append(f'<span style="color:{_hclr};font-weight:700;">{bar[_hs:_he]}</span>')
-                _pos = _he
-            if _pos < len(bar):
-                _parts.append(bar[_pos:])
-            _bar_html = "".join(_parts)
+            if _syl_mode:
+                _bar_html = _render_syl_bar(bar, i, _smap)
+            else:
+                _hl = sorted([(s, e, c) for (b, s, e), c in _cmap.items() if b == i])
+                _parts = []
+                _pos = 0
+                for _hs, _he, _hc in _hl:
+                    if _hs > _pos:
+                        _parts.append(bar[_pos:_hs])
+                    _hclr = SCHEME_COLORS[_hc % len(SCHEME_COLORS)]
+                    _parts.append(f'<span style="color:{_hclr};font-weight:700;">{bar[_hs:_he]}</span>')
+                    _pos = _he
+                if _pos < len(bar):
+                    _parts.append(bar[_pos:])
+                _bar_html = "".join(_parts)
 
             st.markdown(
                 f'<div style="display:flex;align-items:baseline;gap:10px;margin:3px 0;'

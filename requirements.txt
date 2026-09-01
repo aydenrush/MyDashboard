@@ -5,4 +5,5 @@ icalendar>=5.0.0
 recurring-ical-events>=2.1.0
 gpxpy>=1.6.0
 pronouncing>=0.2.0
+pyphen>=0.14.0
 starlette<0.47  # pin for Streamlit compat — check if removable on next Streamlit upgrade
