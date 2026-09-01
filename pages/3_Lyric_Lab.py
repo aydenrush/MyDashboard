@@ -327,10 +327,50 @@ def _count_consonance(bars):
     return total
 
 
+def _get_stress_pattern(bar):
+    result = []
+    for m in re.finditer(r"[a-zA-Z']+", bar):
+        word = m.group()
+        w_clean = word.lower().strip("'")
+        syls = _hyph.inserted(word).split('-')
+        phones = pronouncing.phones_for_word(w_clean)
+        if phones:
+            stresses = []
+            for ph in phones[0].split():
+                for c in ph:
+                    if c.isdigit():
+                        stresses.append(int(c))
+            for si, syl in enumerate(syls):
+                stress = stresses[si] if si < len(stresses) else -1
+                result.append((syl, stress))
+        else:
+            for syl in syls:
+                result.append((syl, -1))
+    return result
+
+
+def _flow_state(bars):
+    total_syls = 0
+    stressed_syls = 0
+    for bar in bars:
+        pattern = _get_stress_pattern(bar)
+        for syl, stress in pattern:
+            total_syls += 1
+            if stress in (1, 2):
+                stressed_syls += 1
+    if total_syls == 0:
+        return 1.0
+    return (stressed_syls / total_syls) / 0.42
+
+
 def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
     n = len(bars)
     if n == 0:
         return 0.0, "?", {}
+
+    unique_bars = len(set(b.lower().strip() for b in bars))
+    repeat_ratio = unique_bars / n
+
     rhyme_sc = min(density / 100, 1.0) * 10
     int_per_bar = internal_n / n
     internal_sc = min(int_per_bar / 1.0, 1.0) * 10
@@ -351,14 +391,16 @@ def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
     unique_r = _unique_ratio(bars)
     multi_n = _count_multisyl(bars, cmap) if cmap else 0
     conson_n = _count_consonance(bars)
-    allit_bonus = min(allit_n / max(n * 1.5, 1), 1.0) * 1.0
-    simile_bonus = min(simile_n / max(n * 0.3, 1), 1.0) * 0.5
-    multi_bonus = min(multi_n / max(n * 0.5, 1), 1.0) * 1.5
-    conson_bonus = min(conson_n / max(n * 2, 1), 1.0) * 0.5
-    unique_sc = min(unique_r / 0.75, 1.0) * 10
-    raw = (rhyme_sc * 0.18 + internal_sc * 0.25 + flow_sc * 0.12
-           + vocab_sc * 0.10 + cluster_sc * 0.18 + unique_sc * 0.17)
-    raw += allit_bonus + simile_bonus + multi_bonus + conson_bonus
+    multi_sc = min(multi_n / max(n * 0.5, 1), 1.0) * 10
+    allit_bonus = min(allit_n / max(n * 1.5, 1), 1.0) * 0.8
+    simile_bonus = min(simile_n / max(n * 0.3, 1), 1.0) * 0.4
+    conson_bonus = min(conson_n / max(n * 2, 1), 1.0) * 0.4
+    raw = (rhyme_sc * 0.20 + internal_sc * 0.20 + flow_sc * 0.10
+           + vocab_sc * 0.10 + cluster_sc * 0.15 + multi_sc * 0.25)
+    raw += allit_bonus + simile_bonus + conson_bonus
+    unique_mult = min(unique_r / 0.7, 1.0)
+    repeat_mult = min(repeat_ratio / 0.8, 1.0)
+    raw *= unique_mult * repeat_mult
     score = max(0, min(10, raw))
     if score >= 9:
         grade = "S"
@@ -536,6 +578,9 @@ if _paste.strip():
 
         _scheme = _detect_scheme(_bars, rhyme_df)
         _cmap = _build_rhyme_map(_bars, rhyme_df)
+        _cluster_words = defaultdict(set)
+        for (_bi_c, _s_c, _e_c), _ci_c in _cmap.items():
+            _cluster_words[_ci_c].add(_bars[_bi_c][_s_c:_e_c].lower().strip("'"))
         _smap = _build_syllable_map(_bars)
         _rhy_n = sum(1 for l in _scheme if _scheme.count(l) > 1 and l != "-") if _scheme else 0
         _density = _rhy_n / len(_scheme) * 100 if _scheme else 0
@@ -551,15 +596,17 @@ if _paste.strip():
         _grade_clrs = {"S": "#FFD700", "A": "#4CAF50", "B": "#2196F3", "C": "#FF9800", "D": "#F44336", "F": "#9E9E9E"}
         _gclr = _grade_clrs.get(_grade, "#666")
 
-        s1, s2, s3, s4 = st.columns(4)
+        _fs = _flow_state(_bars)
+        s1, s2, s3, s4, s5 = st.columns(5)
         s1.metric("Bars", len(_bars))
         s2.metric("Words", _wc)
         s3.metric("Avg/Bar", f"{_avg:.1f}")
-        s4.markdown(
+        s4.metric("Flow State", f"{_fs:.2f}x")
+        s5.markdown(
             f'<div style="text-align:center;padding:4px 0;">'
-            f'<div style="font-size:0.85em;color:#888;margin-bottom:2px;">Rating</div>'
+            f'<div style="font-size:0.85em;color:#888;margin-bottom:2px;">Verdict</div>'
             f'<span style="font-size:2em;font-weight:800;color:{_gclr};">{_grade}</span>'
-            f'<span style="font-size:0.8em;color:#888;margin-left:4px;">{_score}</span>'
+            f'<span style="font-size:0.8em;color:#888;margin-left:4px;">{_score * 10:.0f}/100</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -590,7 +637,9 @@ if _paste.strip():
                     if _hs > _pos:
                         _parts.append(bar[_pos:_hs])
                     _hclr = SCHEME_COLORS[_hc % len(SCHEME_COLORS)]
-                    _parts.append(f'<span style="color:{_hclr};font-weight:700;">{bar[_hs:_he]}</span>')
+                    _conn = len(_cluster_words.get(_hc, set())) - 1
+                    _conn_badge = f'<sup style="color:#888;font-size:0.65em;margin-left:1px;">+{_conn}</sup>' if _conn > 0 else ''
+                    _parts.append(f'<span style="color:{_hclr};font-weight:700;">{bar[_hs:_he]}</span>{_conn_badge}')
                     _pos = _he
                 if _pos < len(bar):
                     _parts.append(bar[_pos:])
@@ -605,6 +654,43 @@ if _paste.strip():
                 f'</div>',
                 unsafe_allow_html=True,
             )
+
+        with st.expander("Stress Pattern Grid"):
+            _stress_cells = []
+            for i, bar in enumerate(_bars):
+                pattern = _get_stress_pattern(bar)
+                cells = []
+                for syl, stress in pattern:
+                    if stress == 1:
+                        bg, fg = "#FF6B35", "#fff"
+                    elif stress == 2:
+                        bg, fg = "#FFB74D", "#000"
+                    elif stress == 0:
+                        bg, fg = "#444", "#aaa"
+                    else:
+                        bg, fg = "#333", "#555"
+                    cells.append(
+                        f'<span style="display:inline-block;padding:2px 4px;margin:1px;'
+                        f'border-radius:3px;background:{bg};color:{fg};'
+                        f'font-size:0.75em;font-family:monospace;line-height:1.4;">{syl}</span>'
+                    )
+                _lbl_s = _scheme[i] if i < len(_scheme) else "-"
+                _stress_cells.append(
+                    f'<div style="display:flex;flex-wrap:wrap;align-items:center;margin:2px 0;">'
+                    f'<span style="color:#888;min-width:28px;font-size:0.75em;font-family:monospace;">'
+                    f'{i + 1:02d}</span>{"".join(cells)}</div>'
+                )
+            _legend = (
+                '<div style="margin-bottom:8px;">'
+                '<span style="display:inline-block;padding:2px 6px;margin:2px;border-radius:3px;'
+                'background:#FF6B35;color:#fff;font-size:0.75em;">Primary</span>'
+                '<span style="display:inline-block;padding:2px 6px;margin:2px;border-radius:3px;'
+                'background:#FFB74D;color:#000;font-size:0.75em;">Secondary</span>'
+                '<span style="display:inline-block;padding:2px 6px;margin:2px;border-radius:3px;'
+                'background:#444;color:#aaa;font-size:0.75em;">Unstressed</span>'
+                '</div>'
+            )
+            st.markdown(_legend + "\n".join(_stress_cells), unsafe_allow_html=True)
 
         with st.expander("Syllable Balance"):
             st.bar_chart(
