@@ -153,6 +153,40 @@ _STOP_WORDS = frozenset({
 })
 
 
+def _rate_verse(bars, density, internal_n, avg_syl):
+    n = len(bars)
+    if n == 0:
+        return 0.0, "?"
+    rhyme_sc = min(density / 100, 1.0) * 10
+    int_per_bar = internal_n / n
+    internal_sc = min(int_per_bar / 2, 1.0) * 10
+    syls = [_line_syllables(b) for b in bars]
+    mean_s = sum(syls) / n
+    var = sum((s - mean_s) ** 2 for s in syls) / n
+    std = var ** 0.5
+    cv = std / mean_s if mean_s > 0 else 1
+    flow_sc = max(0, (1 - cv) * 10)
+    words = sum(len(b.split()) for b in bars)
+    syl_total = sum(syls)
+    syl_per_word = syl_total / words if words > 0 else 1
+    vocab_sc = min((syl_per_word - 1) / 0.8, 1.0) * 10
+    raw = rhyme_sc * 0.30 + internal_sc * 0.25 + flow_sc * 0.25 + vocab_sc * 0.20
+    score = max(0, min(10, raw))
+    if score >= 9:
+        grade = "S"
+    elif score >= 8:
+        grade = "A"
+    elif score >= 6.5:
+        grade = "B"
+    elif score >= 5:
+        grade = "C"
+    elif score >= 3:
+        grade = "D"
+    else:
+        grade = "F"
+    return round(score, 1), grade
+
+
 def _rhyme_key(word):
     phones = pronouncing.phones_for_word(word.lower())
     if phones:
@@ -297,13 +331,24 @@ if _paste.strip():
                 _last_word_pos.add((_bi_m, _mts[-1].start(), _mts[-1].end()))
         _internal_n = sum(1 for pos in _cmap if pos not in _last_word_pos)
 
+        _score, _grade = _rate_verse(_bars, _density, _internal_n, _avg)
+        _grade_clrs = {"S": "#FFD700", "A": "#4CAF50", "B": "#2196F3", "C": "#FF9800", "D": "#F44336", "F": "#9E9E9E"}
+        _gclr = _grade_clrs.get(_grade, "#666")
+
         s1, s2, s3, s4, s5, s6 = st.columns(6)
         s1.metric("Bars", len(_bars))
         s2.metric("Words", _wc)
-        s3.metric("Syllables", _ts)
-        s4.metric("Avg/Bar", f"{_avg:.1f}")
-        s5.metric("End Rhyme", f"{_density:.0f}%")
-        s6.metric("Internal", _internal_n)
+        s3.metric("Avg/Bar", f"{_avg:.1f}")
+        s4.metric("End Rhyme", f"{_density:.0f}%")
+        s5.metric("Internal", _internal_n)
+        s6.markdown(
+            f'<div style="text-align:center;padding:4px 0;">'
+            f'<div style="font-size:0.85em;color:#888;margin-bottom:2px;">Rating</div>'
+            f'<span style="font-size:2em;font-weight:800;color:{_gclr};">{_grade}</span>'
+            f'<span style="font-size:0.8em;color:#888;margin-left:4px;">{_score}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
         for i, bar in enumerate(_bars):
             _s = _line_syllables(bar)
