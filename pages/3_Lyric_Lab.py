@@ -429,7 +429,7 @@ def _build_rhyme_map(bars, rdf):
         if key.startswith("_sl"):
             if len(unique) >= 3 and len(bars_hit) >= 2:
                 raw.append(set(members))
-        elif len(unique) >= 2 or (len(members) >= 2 and len(bars_hit) >= 2):
+        elif len(unique) >= 2:
             raw.append(set(members))
 
     changed = True
