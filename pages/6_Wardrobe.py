@@ -19,18 +19,14 @@ CATEGORIES = ["Tops", "Bottoms", "Outerwear", "Shoes", "Accessories"]
 WEATHER_TAGS = ["Hot (85+)", "Warm (70-85)", "Mild (55-70)", "Cool (40-55)", "Cold (<40)"]
 WEATHER_TAG_MAP = {"Hot (85+)": "hot", "Warm (70-85)": "warm", "Mild (55-70)": "mild", "Cool (40-55)": "cool", "Cold (<40)": "cold"}
 
-# ---------- color helpers (kept from original) ----------
+
+# ---------- color helpers ----------
 
 def hex_to_hsl(hex_color):
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
     hue, light, sat = colorsys.rgb_to_hls(r, g, b)
     return hue * 360, sat * 100, light * 100
-
-
-def hsl_to_hex(h, s, l):
-    r, g, b = colorsys.hls_to_rgb(h / 360, l / 100, s / 100)
-    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
 def color_name(h, s, l):
@@ -114,9 +110,9 @@ def resize_thumbnail(image_bytes, max_size=300):
 def colors_compatible(c1_hex, c2_hex):
     h1, s1, l1 = hex_to_hsl(c1_hex)
     h2, s2, l2 = hex_to_hsl(c2_hex)
-    is_neutral_1 = s1 < 12 or l1 < 12 or l1 > 88
-    is_neutral_2 = s2 < 12 or l2 < 12 or l2 > 88
-    if is_neutral_1 or is_neutral_2:
+    if s1 < 12 or l1 < 12 or l1 > 88:
+        return True
+    if s2 < 12 or l2 < 12 or l2 > 88:
         return True
     hue_diff = min(abs(h1 - h2), 360 - abs(h1 - h2))
     if hue_diff < 40:
@@ -128,9 +124,7 @@ def colors_compatible(c1_hex, c2_hex):
     return False
 
 
-# ---------- weather ----------
-
-# ---------- load wardrobe data ----------
+# ---------- load data ----------
 
 try:
     _wardrobe_data = fetch_all("wardrobe_items", order_col="created_at")
@@ -150,7 +144,6 @@ if _wardrobe_data is None:
         "    is_layer boolean default false,\n"
         "    created_at timestamptz default now()\n"
         ");\n\n"
-        "-- RLS\n"
         "alter table wardrobe_items enable row level security;\n"
         "create policy \"Allow All\" on wardrobe_items for all using (true) with check (true);",
         language="sql",
@@ -159,113 +152,170 @@ if _wardrobe_data is None:
 
 _items = _wardrobe_data
 
+# ---------- weather context ----------
+
 _saved_loc = get_setting("wardrobe_location")
-_lat, _lon = None, None
+_lat, _lon, _city = None, None, None
 if _saved_loc:
     try:
         _loc = json.loads(_saved_loc)
-        _lat, _lon = _loc["lat"], _loc["lon"]
+        _lat, _lon, _city = _loc["lat"], _loc["lon"], _loc.get("city")
     except Exception:
         pass
 
-# ---------- color matcher (original feature) ----------
+_weather_cat = None
+_current_temp = None
+if _lat and _lon:
+    _wx = fetch_weather(_lat, _lon, days=1)
+    if _wx and "hourly" in _wx:
+        _now_h = datetime.now().hour
+        _current_temp = _wx["hourly"]["temperature_2m"][min(_now_h, 23)]
+        _weather_cat = weather_category(_current_temp)
 
-with st.expander("What Goes With This?"):
-    st.caption("Pick the color you're wearing — see what pairs well with it.")
+if _weather_cat and _current_temp is not None:
+    st.caption(f"{_current_temp:.0f}°F{f' in {_city}' if _city else ''} — dressing for **{_weather_cat}**")
 
-    PRESETS = {
-        "Navy": "#1a2744", "Royal Blue": "#2563eb", "Baby Blue": "#89CFF0",
-        "Black": "#111111", "White": "#f5f5f5", "Gray": "#808080",
-        "Charcoal": "#36454F", "Cream": "#FFFDD0", "Khaki": "#c3b091",
-        "Olive": "#556B2F", "Forest Green": "#228B22", "Sage": "#9DC183",
-        "Burgundy": "#800020", "Red": "#cc0000", "Pink": "#FF69B4",
-        "Orange": "#FF6600", "Burnt Orange": "#CC5500", "Yellow": "#FFD700",
-        "Purple": "#6A0DAD", "Lavender": "#B57EDC", "Tan": "#D2B48C",
-        "Brown": "#5C4033", "Teal": "#008080", "Coral": "#FF6F61",
-        "Maroon": "#800000",
-    }
+# ============================================================
+# BUILD AN OUTFIT
+# ============================================================
 
-    pc1, pc2 = st.columns([1, 1])
-    with pc1:
-        preset = st.selectbox("Quick pick", ["Custom..."] + list(PRESETS.keys()))
-    with pc2:
-        if preset != "Custom...":
-            picked = st.color_picker("Fine-tune", value=PRESETS[preset])
-        else:
-            picked = st.color_picker("Pick your color", value="#2563eb")
+if _items:
+    st.subheader("Build an Outfit")
 
-    h, s, l = hex_to_hsl(picked)
-    name = color_name(h, s, l)
+    _filter_weather = False
+    if _weather_cat:
+        _filter_weather = st.checkbox("Filter by today's weather", value=True, key="wx_filter")
 
-    st.markdown(
-        f'<div style="display:flex;align-items:center;gap:16px;margin:16px 0;">'
-        f'<div style="width:60px;height:60px;border-radius:12px;background:{picked};'
-        f'border:2px solid rgba(128,128,128,0.3);"></div>'
-        f'<div><div style="font-size:1.2em;font-weight:700;">{name}</div>'
-        f'<div style="font-size:0.85em;opacity:0.6;">{picked}</div></div></div>',
-        unsafe_allow_html=True,
+    _options = [""]
+    _item_map = {}
+    for cat in CATEGORIES:
+        for item in _items:
+            if item.get("category") == cat:
+                key = f"{cat}: {item['name']}"
+                _options.append(key)
+                _item_map[key] = item
+
+    _sel = st.selectbox(
+        "piece", _options,
+        format_func=lambda x: x or "Pick an item to build around...",
+        label_visibility="collapsed",
     )
 
-    def swatch_row(colors, labels):
-        cards = "".join(swatch(c, l, 60) for c, l in zip(colors, labels))
-        return f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">{cards}</div>'
+    if _sel and _sel in _item_map:
+        _anchor = _item_map[_sel]
+        _a_cat = _anchor.get("category")
+        _a_colors = _anchor.get("colors") or []
+        _a_layer = _anchor.get("is_layer", False)
 
-    def render_palette(title, hsl_list, description=""):
-        colors = [hsl_to_hex(h2, s2, l2) for h2, s2, l2 in hsl_list]
-        labels = [color_name(h2, s2, l2) for h2, s2, l2 in hsl_list]
-        st.markdown(f"**{title}**")
-        if description:
-            st.caption(description)
-        st.markdown(swatch_row(colors, labels), unsafe_allow_html=True)
+        _hc1, _hc2 = st.columns([1, 5])
+        with _hc1:
+            if _anchor.get("image_b64"):
+                st.image(base64.b64decode(_anchor["image_b64"]), width=140)
+        with _hc2:
+            st.markdown(f"**{_anchor['name']}**")
+            if _a_colors:
+                _sw = "".join(swatch(c, color_name(*hex_to_hsl(c)), 28) for c in _a_colors)
+                st.markdown(f'<div style="display:flex;gap:4px;margin:4px 0;">{_sw}</div>', unsafe_allow_html=True)
+            _tags = []
+            if _a_layer:
+                _tags.append("Layer")
+            _wt = _anchor.get("weather_tags") or []
+            if _wt:
+                _tags.extend(_wt)
+            if _tags:
+                st.caption(", ".join(_tags))
 
-    is_neutral = s < 12 or l < 12 or l > 88
+        def _ok(item, category=None, layer=None):
+            if item["id"] == _anchor["id"]:
+                return False
+            if category and item.get("category") != category:
+                return False
+            if layer is not None and item.get("is_layer", False) != layer:
+                return False
+            ic = item.get("colors") or []
+            if ic and _a_colors:
+                if not any(colors_compatible(ac, c) for ac in _a_colors for c in ic):
+                    return False
+            if _filter_weather and _weather_cat:
+                wt = item.get("weather_tags") or []
+                if wt and _weather_cat not in wt:
+                    return False
+            return True
 
-    if is_neutral:
-        pops = [
-            (0, 70, 50), (210, 70, 45), (130, 50, 40),
-            (30, 80, 50), (280, 50, 45), (350, 65, 50),
-        ]
-        render_palette("Pop Colors", pops, "Add a bold accent")
-        earth = [(25, 40, 35), (35, 50, 55), (85, 25, 40), (15, 30, 30)]
-        render_palette("Earth Tones", earth, "Muted, warm tones")
-    else:
-        render_palette("Complementary", [[(h + 180) % 360, s, l]], "Opposite on the wheel — bold contrast")
-        render_palette("Analogous", [[(h - 30) % 360, s, l], [(h + 30) % 360, s, l]], "Neighbors — smooth, cohesive")
-        render_palette("Split Complementary", [[(h + 150) % 360, s, l], [(h + 210) % 360, s, l]], "Softer contrast")
+        _roles = []
+        if _a_cat == "Tops" and not _a_layer:
+            _roles = [
+                ("Bottoms", [i for i in _items if _ok(i, "Bottoms")]),
+                ("Layer", [i for i in _items if _ok(i, layer=True)]),
+                ("Outerwear", [i for i in _items if _ok(i, "Outerwear", layer=False)]),
+                ("Shoes", [i for i in _items if _ok(i, "Shoes")]),
+            ]
+        elif _a_cat == "Tops" and _a_layer:
+            _roles = [
+                ("Base Top", [i for i in _items if _ok(i, "Tops", layer=False)]),
+                ("Bottoms", [i for i in _items if _ok(i, "Bottoms")]),
+                ("Shoes", [i for i in _items if _ok(i, "Shoes")]),
+            ]
+        elif _a_cat == "Bottoms":
+            _roles = [
+                ("Tops", [i for i in _items if _ok(i, "Tops", layer=False)]),
+                ("Layer", [i for i in _items if _ok(i, layer=True)]),
+                ("Outerwear", [i for i in _items if _ok(i, "Outerwear", layer=False)]),
+                ("Shoes", [i for i in _items if _ok(i, "Shoes")]),
+            ]
+        elif _a_cat == "Outerwear":
+            _roles = [
+                ("Tops", [i for i in _items if _ok(i, "Tops", layer=False)]),
+                ("Bottoms", [i for i in _items if _ok(i, "Bottoms")]),
+                ("Shoes", [i for i in _items if _ok(i, "Shoes")]),
+            ]
+        elif _a_cat in ("Shoes", "Accessories"):
+            _roles = [
+                ("Tops", [i for i in _items if _ok(i, "Tops", layer=False)]),
+                ("Bottoms", [i for i in _items if _ok(i, "Bottoms")]),
+            ]
 
-    # matching items from wardrobe
-    if _items:
-        _matching = []
-        for item in _items:
-            item_colors = item.get("colors") or []
-            for ic in item_colors:
-                if colors_compatible(picked, ic):
-                    _matching.append(item)
-                    break
-        if _matching:
-            st.markdown(f"**{len(_matching)} items from your closet match:**")
-            _match_cols = st.columns(min(len(_matching), 5))
-            for i, item in enumerate(_matching[:10]):
-                with _match_cols[i % 5]:
-                    if item.get("image_b64"):
-                        st.image(base64.b64decode(item["image_b64"]), width=100)
-                    st.caption(item["name"])
+        _any = False
+        for _rname, _ritems in _roles:
+            if not _ritems:
+                continue
+            _any = True
+            st.markdown(f"**{_rname}**")
+            _nc = min(len(_ritems), 4)
+            _rc = st.columns(_nc)
+            for _ri, _rit in enumerate(_ritems[:8]):
+                with _rc[_ri % _nc]:
+                    if _rit.get("image_b64"):
+                        st.image(base64.b64decode(_rit["image_b64"]), width=120)
+                    st.caption(_rit["name"])
+                    _ric = _rit.get("colors") or []
+                    if _ric:
+                        _rs = "".join(swatch(c, "", 18) for c in _ric)
+                        st.markdown(f'<div style="display:flex;gap:2px;">{_rs}</div>', unsafe_allow_html=True)
+
+        if not _any:
+            st.caption("No color-compatible matches found for today's weather. Try unchecking the weather filter.")
+
+else:
+    st.info("Add items to your closet below to start building outfits.")
 
 st.divider()
 
-# ---------- my closet ----------
+# ============================================================
+# MY CLOSET
+# ============================================================
 
 st.subheader("My Closet")
 
 if not _items:
-    st.info("No items yet — upload some clothes below.")
+    st.caption("Empty — add items below.")
 else:
     _cat_tabs = st.tabs(CATEGORIES)
     for _ci, _cat in enumerate(CATEGORIES):
         with _cat_tabs[_ci]:
             _cat_items = [it for it in _items if it.get("category") == _cat]
             if not _cat_items:
-                st.caption("Nothing here yet")
+                st.caption("Nothing here yet.")
                 continue
             _cols = st.columns(4)
             for _ii, _item in enumerate(_cat_items):
@@ -275,82 +325,25 @@ else:
                     st.markdown(f"**{_item['name']}**")
                     _ic = _item.get("colors") or []
                     if _ic:
-                        _swatches = "".join(swatch(c, "", 24) for c in _ic)
+                        _sw = "".join(swatch(c, "", 24) for c in _ic)
                         st.markdown(
-                            f'<div style="display:flex;gap:4px;margin:4px 0;">{_swatches}</div>',
+                            f'<div style="display:flex;gap:4px;margin:4px 0;">{_sw}</div>',
                             unsafe_allow_html=True,
                         )
-                    _tags_parts = []
+                    _tp = []
                     if _item.get("is_layer"):
-                        _tags_parts.append("Layer")
+                        _tp.append("Layer")
                     _wt = _item.get("weather_tags") or []
                     if _wt:
-                        _tags_parts.extend(_wt)
-                    if _tags_parts:
-                        st.caption(", ".join(_tags_parts))
+                        _tp.extend(_wt)
+                    if _tp:
+                        st.caption(", ".join(_tp))
 
 st.divider()
 
-# ---------- outfit suggestions ----------
-
-if _items and _lat:
-    weather = fetch_weather(_lat, _lon, days=1)
-    if weather and "hourly" in weather:
-        now_hour = datetime.now().hour
-        current_temp = weather["hourly"]["temperature_2m"][min(now_hour, 23)]
-        cat = weather_category(current_temp)
-
-        _base_tops = [it for it in _items if it.get("category") == "Tops" and not it.get("is_layer") and cat in (it.get("weather_tags") or [])]
-        _layers = [it for it in _items if it.get("is_layer") and cat in (it.get("weather_tags") or [])]
-        _bots = [it for it in _items if it.get("category") == "Bottoms" and cat in (it.get("weather_tags") or [])]
-        _outer = [it for it in _items if it.get("category") == "Outerwear" and not it.get("is_layer") and cat in (it.get("weather_tags") or [])]
-
-        if _base_tops and _bots:
-            with st.expander(f"Outfit Suggestions ({cat.title()} weather, {current_temp:.0f}°F)"):
-                _combos = []
-                for t in _base_tops:
-                    for b in _bots:
-                        t_colors = t.get("colors") or []
-                        b_colors = b.get("colors") or []
-                        if t_colors and b_colors:
-                            if not any(colors_compatible(tc, bc) for tc in t_colors for bc in b_colors):
-                                continue
-                        _matching_layers = []
-                        for ly in _layers:
-                            ly_colors = ly.get("colors") or []
-                            if not ly_colors or not t_colors:
-                                _matching_layers.append(ly)
-                            elif any(colors_compatible(lc, tc) for lc in ly_colors for tc in t_colors):
-                                _matching_layers.append(ly)
-                        _combos.append((t, b, _matching_layers))
-
-                if not _combos:
-                    st.caption("No color-compatible combos found — try adding more items")
-                else:
-                    for _oi, (_t, _b, _lyrs) in enumerate(_combos[:6]):
-                        _ncols = 3 if _lyrs else 2
-                        _ocols = st.columns(_ncols)
-                        with _ocols[0]:
-                            if _t.get("image_b64"):
-                                st.image(base64.b64decode(_t["image_b64"]), width=120)
-                            st.caption(f"Top: {_t['name']}")
-                        with _ocols[1]:
-                            if _b.get("image_b64"):
-                                st.image(base64.b64decode(_b["image_b64"]), width=120)
-                            st.caption(f"Bottom: {_b['name']}")
-                        if _lyrs:
-                            with _ocols[2]:
-                                _best_layer = _lyrs[0]
-                                if _best_layer.get("image_b64"):
-                                    st.image(base64.b64decode(_best_layer["image_b64"]), width=120)
-                                st.caption(f"Layer: {_best_layer['name']}")
-                        if _outer:
-                            st.caption(f"Jacket: {_outer[0]['name']}")
-                        st.markdown("---")
-
-st.divider()
-
-# ---------- add item ----------
+# ============================================================
+# ADD ITEM
+# ============================================================
 
 with st.expander("Add Item"):
     _up_file = st.file_uploader("Photo", type=["jpg", "jpeg", "png", "webp"], key="ward_upload")
@@ -394,7 +387,9 @@ with st.expander("Add Item"):
         st.success(f"Added {_item_name.strip()}!")
         st.rerun()
 
-# ---------- delete items ----------
+# ============================================================
+# DELETE ITEMS
+# ============================================================
 
 if _items:
     with st.expander("Delete Items"):

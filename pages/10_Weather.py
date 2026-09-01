@@ -115,16 +115,14 @@ st.divider()
 
 st.subheader("Today")
 
-_today_start = 0
 _today_end = min(24, len(temps))
-_today_hours = list(range(_today_start, _today_end))
-_today_labels = [fmt_hour(h) for h in _today_hours]
+_today_labels = [f"{h:02d} {fmt_hour(h)}" for h in range(_today_end)]
 
 _today_df = pd.DataFrame({
     "Hour": _today_labels,
-    "Temp (°F)": [temps[h] for h in _today_hours],
-    "Humidity (%)": [humids[h] for h in _today_hours],
-    "Rain (%)": [precip[h] if h < len(precip) else 0 for h in _today_hours],
+    "Temp (°F)": temps[:_today_end],
+    "Humidity (%)": humids[:_today_end],
+    "Rain (%)": [precip[h] if h < len(precip) else 0 for h in range(_today_end)],
 })
 
 _chart_tab1, _chart_tab2, _chart_tab3 = st.tabs(["Temperature", "Humidity", "Rain Chance"])
@@ -174,11 +172,17 @@ for _di, _dd in enumerate(_days_data):
         st.caption(f"Dress for: {_cat.title()}")
 
 # hourly chart for all 3 days
+_all_labels = []
+for i in range(len(temps)):
+    _day_offset = i // 24
+    _hour = i % 24
+    _day_date = (now + timedelta(days=_day_offset)).strftime("%m/%d")
+    _all_labels.append(f"{_day_date} {_hour:02d}:00")
 _all_hours_df = pd.DataFrame({
-    "Hour": [times[i][11:16] for i in range(len(temps))],
-    "Temp (°F)": temps[:len(times)],
-    "Humidity (%)": humids[:len(times)],
-    "Rain (%)": precip[:len(times)] if len(precip) >= len(times) else precip + [0] * (len(times) - len(precip)),
+    "Hour": _all_labels[:len(temps)],
+    "Temp (°F)": temps[:len(_all_labels)],
+    "Humidity (%)": humids[:len(_all_labels)],
+    "Rain (%)": precip[:len(_all_labels)] if len(precip) >= len(_all_labels) else precip + [0] * (len(_all_labels) - len(precip)),
 })
 
 with st.expander("Full 3-Day Hourly"):

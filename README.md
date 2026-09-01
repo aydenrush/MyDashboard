@@ -6,16 +6,15 @@ Personal Streamlit dashboard with a Supabase (PostgreSQL) backend. Tracks gaming
 
 | # | Page | What it does |
 |---|------|-------------|
-| — | **Dashboard** (app.py) | Today-first planner: focused day view with Google Calendar + iCal integration, school schedule, running workouts, activity tracking, currently reading progress, and active to-dos. Weekly grid with collapsible past days, streak tracker, quick-add, iCal feed publishing, year-in-review analytics. |
+| — | **Dashboard** (app.py) | Today-first planner: focused day view with Google Calendar + iCal integration, school schedule, running workouts, weather-based outfit suggestion, best time to run (on workout days), activity tracking, currently reading progress, and active to-dos. Weekly grid with collapsible past days, streak tracker, quick-add, iCal feed publishing, year-in-review analytics. |
 | 1 | **CFB Dynasty** | College Football draft pick tracker. Per-school analytics: picks by round/year/position/class, measurables, filters, bulk import. |
 | 2 | **Madden Franchise** | Full franchise tracker: season awards, team win records with division standings, All-Pro teams rendered as a football formation, 99 Club tracking, player career tracker, parity index. End-of-season form for one-shot data entry. |
-| 3 | **Rhymes** | Rhyme group reference for rap writing. Search, inline edit/delete, group analytics, bulk import. |
+| 3 | **Lyric Lab** | Rap writing toolbox designed to run alongside Google Docs. Rhyme finder (grouped by syllable count), syllable counter with per-word breakdown, paste-and-analyze (bar/word/syllable stats, rhyme scheme detection, rhyme density, syllable balance chart, suggested rhymes for unrhymed endings). Archive for saving finished pieces. Full rhyme database management (search, edit, bulk import). |
 | 4 | **Training** | Running schedule with workout types (speed, tempo, long, easy, hills), run logging (manual, GPX upload, bulk GPX, Strava CSV import), today's weather-based best run time, weekly view, auto-complete on log, and 7 analytics modules (weekly mileage, pace trend, training load, effort zones, splits, route comparison, PRs). |
 | 5 | **Books** | Reading log with page tracking, pace stats, start/finish dates, inline notes & highlights per book. Currently reading progress bars, want-to-read queue, genre/decade/pages analytics. |
-| 6 | **Wardrobe** | Closet digitizer: upload photos of clothing items, auto-extract dominant colors, tag weather suitability and layering pieces. Color theory matcher with complementary/analogous/split-complementary palettes shows matching items from your closet. Weather-aware outfit suggestions pairing tops, bottoms, and layers by color compatibility. |
+| 6 | **Wardrobe** | Closet digitizer with "Build Around" outfit builder: pick any item from your closet, see color-compatible matches by role (tops, bottoms, layers, outerwear, shoes) filtered by today's weather. Upload photos with auto-extracted dominant colors, tag weather suitability and layering pieces. Dashboard surfaces a daily outfit suggestion. |
 | 7 | **Minecraft** | Coordinate tracker with dimension-colored cards, Nether/Overworld conversion, inline editing, and Chunkbase seed map link. |
 | 8 | **To Do** | Priority-based task list (high/medium/low). Per-item copy via code block, inline edit (task + priority), delete on complete. |
-| 9 | **Lyrics** | Rap writing workspace with inline rhyme lookup from the Rhymes database. Save drafts, track status (draft/in progress/finished), bar/word counts. |
 | 10 | **Weather** | 3-day forecast with hourly temperature, humidity, and rain charts. Current conditions, best time to go outside, best time to run (weighted against humidity), adjustable run deadline slider, high-humidity warnings. Shares location with Training and Wardrobe pages. |
 
 ## Setup

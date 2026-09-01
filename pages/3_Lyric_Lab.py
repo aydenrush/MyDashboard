@@ -1,0 +1,439 @@
+import streamlit as st
+import pandas as pd
+import re
+from collections import defaultdict
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from db import fetch_all, insert_row, insert_rows, update_row, delete_row
+from auth import require_login
+
+st.set_page_config(page_title="Lyric Lab", layout="wide")
+require_login()
+
+st.title("Lyric Lab")
+
+try:
+    rhyme_data = fetch_all("rhymes", order_col="rhyme_group")
+except Exception:
+    rhyme_data = []
+rhyme_df = pd.DataFrame(rhyme_data)
+
+try:
+    lyrics_data = fetch_all("lyrics", order_col="updated_at")
+except Exception:
+    lyrics_data = None
+lyrics_df = pd.DataFrame(lyrics_data) if lyrics_data else pd.DataFrame()
+
+today = datetime.now(ZoneInfo("America/Indiana/Indianapolis"))
+
+STATUS_LABELS = {"draft": "Draft", "in_progress": "In Progress", "finished": "Finished"}
+SCHEME_COLORS = [
+    "#F44336", "#2196F3", "#4CAF50", "#FF9800",
+    "#9C27B0", "#00BCD4", "#FF5722", "#8BC34A",
+    "#E91E63", "#3F51B5", "#CDDC39", "#795548",
+]
+
+
+# ---------- helpers ----------
+
+def _count_syllables(word):
+    word = re.sub(r'[^a-z]', '', word.lower())
+    if not word:
+        return 0
+    count = 0
+    prev_vowel = False
+    for ch in word:
+        is_v = ch in "aeiouy"
+        if is_v and not prev_vowel:
+            count += 1
+        prev_vowel = is_v
+    if word.endswith("e") and count > 1:
+        count -= 1
+    if word.endswith("le") and len(word) > 2 and word[-3] not in "aeiouy":
+        count += 1
+    return max(count, 1)
+
+
+def _line_syllables(line):
+    words = re.findall(r"[a-zA-Z']+", line)
+    return sum(_count_syllables(w) for w in words)
+
+
+def _last_word(line):
+    words = re.findall(r"[a-zA-Z']+", line)
+    return words[-1].lower() if words else ""
+
+
+def _find_rhymes(word, rdf):
+    if rdf.empty or not word:
+        return []
+    matches = rdf[rdf["word"].str.lower() == word.lower()]
+    if matches.empty:
+        matches = rdf[rdf["word"].str.lower().str.contains(re.escape(word.lower()), na=False)]
+    if matches.empty:
+        return []
+    results = []
+    seen = set()
+    for _, m in matches.iterrows():
+        gid = m["rhyme_group"]
+        if gid in seen:
+            continue
+        seen.add(gid)
+        results.extend(
+            w for w in rdf[rdf["rhyme_group"] == gid]["word"].tolist()
+            if w.lower() != word.lower()
+        )
+    return results
+
+
+def _detect_scheme(lines, rdf):
+    if rdf.empty:
+        return []
+    end_words = [_last_word(l) for l in lines]
+    group_map = {}
+    for _, row in rdf.iterrows():
+        group_map.setdefault(row["word"].lower(), set()).add(row["rhyme_group"])
+    next_label = 0
+    result = []
+    for i, word in enumerate(end_words):
+        if not word:
+            result.append("-")
+            continue
+        word_groups = group_map.get(word, set())
+        assigned = False
+        for j in range(i):
+            prev_groups = group_map.get(end_words[j], set())
+            if word_groups & prev_groups or word == end_words[j]:
+                result.append(result[j])
+                assigned = True
+                break
+        if not assigned:
+            result.append(chr(65 + (next_label % 26)))
+            next_label += 1
+    return result
+
+
+# ============================================================
+# TOOLS — the reason you tab over from Docs
+# ============================================================
+
+tool_left, tool_right = st.columns([3, 2])
+
+with tool_left:
+    st.markdown("##### Rhyme Finder")
+    _rf = st.text_input(
+        "rhyme", placeholder="Type a word...",
+        label_visibility="collapsed", key="rhyme_input",
+    )
+    if _rf.strip():
+        _word = _rf.strip()
+        _wsyl = _count_syllables(_word)
+        _rhymes = _find_rhymes(_word, rhyme_df)
+        if _rhymes:
+            _by_syl = defaultdict(list)
+            for r in _rhymes:
+                _by_syl[_count_syllables(r)].append(r)
+            st.markdown(f"**{len(_rhymes)} rhymes** for *{_word}* ({_wsyl} syl)")
+            for sc in sorted(_by_syl.keys()):
+                st.caption(f"{sc} syl — {' / '.join(_by_syl[sc])}")
+            st.code(" / ".join(_rhymes), language=None)
+        elif not rhyme_df.empty:
+            st.caption(f"No rhymes for *{_word}* in your database ({_wsyl} syl)")
+        else:
+            st.caption("No rhyme data loaded.")
+
+with tool_right:
+    st.markdown("##### Syllable Counter")
+    _sc = st.text_input(
+        "syllables", placeholder="Type or paste a bar...",
+        label_visibility="collapsed", key="syl_input",
+    )
+    if _sc.strip():
+        _wds = re.findall(r"[a-zA-Z']+", _sc)
+        _pw = [(w, _count_syllables(w)) for w in _wds]
+        _tot = sum(s for _, s in _pw)
+        st.markdown(f"**{_tot} syllables**")
+        st.caption("  ".join(f"{w}({s})" for w, s in _pw))
+
+st.divider()
+
+# ============================================================
+# ANALYZE — paste from Docs, see everything instantly
+# ============================================================
+
+st.markdown("##### Analyze")
+
+_loaded_id = st.session_state.get("loaded_lyric_id")
+_loaded_title = st.session_state.get("loaded_lyric_title")
+if _loaded_id:
+    _lc1, _lc2 = st.columns([8, 1])
+    _lc1.caption(f"Editing: **{_loaded_title}**")
+    if _lc2.button("Clear"):
+        st.session_state.pop("loaded_lyric_id", None)
+        st.session_state.pop("loaded_lyric_title", None)
+        st.session_state["paste_area"] = ""
+        st.rerun()
+
+_paste = st.text_area(
+    "paste", height=280, placeholder="Paste from Google Docs...",
+    key="paste_area", label_visibility="collapsed",
+)
+
+if _paste.strip():
+    _bars = [l for l in _paste.split("\n") if l.strip()]
+    if _bars:
+        _wc = len(_paste.split())
+        _ts = sum(_line_syllables(b) for b in _bars)
+        _avg = _ts / len(_bars)
+
+        _scheme = _detect_scheme(_bars, rhyme_df) if not rhyme_df.empty else []
+        _rhy_n = sum(1 for l in _scheme if _scheme.count(l) > 1 and l != "-") if _scheme else 0
+        _density = _rhy_n / len(_scheme) * 100 if _scheme else 0
+
+        s1, s2, s3, s4, s5 = st.columns(5)
+        s1.metric("Bars", len(_bars))
+        s2.metric("Words", _wc)
+        s3.metric("Syllables", _ts)
+        s4.metric("Avg/Bar", f"{_avg:.1f}")
+        s5.metric("Rhyme %", f"{_density:.0f}%" if _scheme else "—")
+
+        for i, bar in enumerate(_bars):
+            _s = _line_syllables(bar)
+            _lbl = _scheme[i] if i < len(_scheme) else "-"
+            _ci = ord(_lbl) - 65 if _lbl != "-" else -1
+            _clr = SCHEME_COLORS[_ci % len(SCHEME_COLORS)] if _ci >= 0 else "#666"
+            _bold = _scheme.count(_lbl) > 1 and _lbl != "-" if _scheme else False
+            st.markdown(
+                f'<div style="display:flex;align-items:baseline;gap:10px;margin:3px 0;'
+                f'font-family:monospace;font-size:0.95em;">'
+                f'<span style="color:{_clr};font-weight:700;min-width:18px;text-align:center;">{_lbl}</span>'
+                f'<span style="color:#888;min-width:30px;text-align:right;font-size:0.85em;">{_s}s</span>'
+                f'<span style="font-weight:{"700" if _bold else "400"};">{bar}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        with st.expander("Syllable Balance"):
+            st.bar_chart(
+                pd.DataFrame({
+                    "Bar": [f"{i + 1:02d}" for i in range(len(_bars))],
+                    "Syllables": [_line_syllables(b) for b in _bars],
+                }),
+                x="Bar", y="Syllables", color="#FF6B35",
+            )
+
+        if not rhyme_df.empty:
+            _unrhymed = []
+            for i, bar in enumerate(_bars):
+                lw = _last_word(bar)
+                if not lw:
+                    continue
+                lbl = _scheme[i] if i < len(_scheme) else "-"
+                if not (_scheme.count(lbl) > 1 and lbl != "-"):
+                    _unrhymed.append(lw)
+            if _unrhymed:
+                with st.expander(f"Rhyme Suggestions ({len(_unrhymed)} unrhymed endings)"):
+                    for word in _unrhymed[-8:]:
+                        rh = _find_rhymes(word, rhyme_df)
+                        if rh:
+                            st.code(f"{word} → {' / '.join(rh[:10])}", language=None)
+                        else:
+                            st.caption(f"**{word}** — not in DB")
+
+        # --- save / update ---
+        _save_col1, _save_col2 = st.columns(2)
+        if _loaded_id:
+            if _save_col1.button("Update in Archive"):
+                update_row("lyrics", _loaded_id, {
+                    "content": _paste,
+                    "updated_at": today.isoformat(),
+                })
+                st.success(f"Updated '{_loaded_title}'.")
+                st.rerun()
+        if lyrics_data is not None:
+            with _save_col2.popover("Save as New"):
+                with st.form("save_lyric"):
+                    _sv_t = st.text_input("Title")
+                    _sv_s = st.selectbox(
+                        "Status", list(STATUS_LABELS.keys()),
+                        format_func=lambda x: STATUS_LABELS[x],
+                    )
+                    if st.form_submit_button("Save"):
+                        if _sv_t.strip():
+                            insert_row("lyrics", {
+                                "title": _sv_t.strip(),
+                                "content": _paste,
+                                "status": _sv_s,
+                            })
+                            st.success(f"Saved '{_sv_t.strip()}'")
+                            st.rerun()
+                        else:
+                            st.error("Title required.")
+
+st.divider()
+
+# ============================================================
+# ARCHIVE
+# ============================================================
+
+_arch_label = f"Archive ({len(lyrics_df)})" if not lyrics_df.empty else "Archive"
+with st.expander(_arch_label):
+    if lyrics_data is None:
+        st.warning("Create the `lyrics` table in Supabase:")
+        st.code(
+            "create table lyrics (\n"
+            "    id bigint generated by default as identity primary key,\n"
+            "    title text not null,\n"
+            "    content text default '',\n"
+            "    status text default 'draft',\n"
+            "    created_at timestamptz default now(),\n"
+            "    updated_at timestamptz default now()\n"
+            ");\n\n"
+            "alter table lyrics enable row level security;\n"
+            "create policy \"Allow All\" on lyrics\n"
+            "  for all using (true) with check (true);",
+            language="sql",
+        )
+    elif lyrics_df.empty:
+        st.caption("No saved lyrics yet. Paste bars above and save them.")
+    else:
+        for _, _ly in lyrics_df.iterrows():
+            _st = STATUS_LABELS.get(_ly.get("status", "draft"), "Draft")
+            _ct = _ly.get("content") or ""
+            _bn = len([l for l in _ct.split("\n") if l.strip()])
+            _wn = len(_ct.split())
+            _sn = sum(_line_syllables(l) for l in _ct.split("\n") if l.strip())
+
+            ac1, ac2, ac3 = st.columns([7, 1, 1])
+            ac1.markdown(f"**{_ly['title']}** — {_st} · {_bn} bars · {_wn} words · {_sn} syl")
+            if ac2.button("Load", key=f"ld_{_ly['id']}"):
+                st.session_state["loaded_lyric_id"] = int(_ly["id"])
+                st.session_state["loaded_lyric_title"] = _ly["title"]
+                st.session_state["paste_area"] = _ct
+                st.rerun()
+
+            _dk = f"cdla_{_ly['id']}"
+            if st.session_state.get(_dk):
+                st.warning(f"Delete **{_ly['title']}**?")
+                yc, nc = st.columns(2)
+                if yc.button("Yes", key=f"ya_{_ly['id']}"):
+                    delete_row("lyrics", _ly["id"])
+                    st.session_state.pop(_dk, None)
+                    if _loaded_id == int(_ly["id"]):
+                        st.session_state.pop("loaded_lyric_id", None)
+                        st.session_state.pop("loaded_lyric_title", None)
+                    st.rerun()
+                if nc.button("No", key=f"na_{_ly['id']}"):
+                    st.session_state.pop(_dk, None)
+                    st.rerun()
+            elif ac3.button("\U0001f5d1️", key=f"da_{_ly['id']}"):
+                st.session_state[_dk] = True
+                st.rerun()
+
+# ============================================================
+# RHYME DATABASE
+# ============================================================
+
+_rdb_ct = f" ({len(rhyme_df)} words, {rhyme_df['rhyme_group'].nunique()} groups)" if not rhyme_df.empty else ""
+with st.expander(f"Rhyme Database{_rdb_ct}"):
+    if not rhyme_df.empty:
+        _dbq = st.text_input("Search", placeholder="Search...", key="rdb_search")
+        _groups = rhyme_df.groupby("rhyme_group")
+        _shown = 0
+        for gid, gdf in _groups:
+            words = gdf["word"].tolist()
+            if _dbq and not any(_dbq.lower() in w.lower() for w in words):
+                continue
+            _shown += 1
+            hl = [f"**{w}**" if _dbq and _dbq.lower() in w.lower() else w for w in words]
+            gc1, gc2 = st.columns([8, 2])
+            gc1.markdown(" / ".join(hl))
+            with gc2.popover("Edit"):
+                for _, row in gdf.iterrows():
+                    ec1, ec2, ec3 = st.columns([4, 2, 1])
+                    nw = ec1.text_input("W", value=row["word"], key=f"erw_{row['id']}", label_visibility="collapsed")
+                    if ec2.button("Save", key=f"srw_{row['id']}"):
+                        if nw.strip() and nw.strip() != row["word"]:
+                            update_row("rhymes", row["id"], {"word": nw.strip()})
+                            st.rerun()
+                    ck = f"cdrw_{row['id']}"
+                    if st.session_state.get(ck):
+                        st.warning(f"Delete **{row['word']}**?")
+                        yc, nc = st.columns(2)
+                        if yc.button("Yes", key=f"yrw_{row['id']}"):
+                            delete_row("rhymes", row["id"])
+                            st.session_state.pop(ck, None)
+                            st.rerun()
+                        if nc.button("No", key=f"nrw_{row['id']}"):
+                            st.session_state.pop(ck, None)
+                            st.rerun()
+                    elif ec3.button("X", key=f"drw_{row['id']}"):
+                        st.session_state[ck] = True
+                        st.rerun()
+        if _dbq and _shown == 0:
+            st.caption("No matches.")
+
+        st.download_button(
+            "Download CSV",
+            rhyme_df[["rhyme_group", "word"]].rename(columns={"rhyme_group": "Group", "word": "Word"}).to_csv(index=False),
+            "rhymes.csv", "text/csv", key="dl_rhymes",
+        )
+
+    _t1, _t2 = st.tabs(["Add Group", "Bulk Import"])
+    with _t1:
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            with st.form("add_rg"):
+                _nw = st.text_input("New group (comma-separated)", placeholder="cat, hat, bat")
+                if st.form_submit_button("Add Group"):
+                    if _nw:
+                        _ng = int(rhyme_df["rhyme_group"].max()) + 1 if not rhyme_df.empty else 1
+                        for w in _nw.split(","):
+                            w = w.strip()
+                            if w:
+                                insert_row("rhymes", {"word": w, "rhyme_group": _ng})
+                        st.success("Added.")
+                        st.rerun()
+        with ac2:
+            if not rhyme_df.empty:
+                with st.form("add_to_grp"):
+                    _gd = {}
+                    for gid, gdf in rhyme_df.groupby("rhyme_group"):
+                        _gd[", ".join(gdf["word"].tolist()[:4])] = gid
+                    _sel = st.selectbox("Add to group", list(_gd.keys()))
+                    _aw = st.text_input("New word")
+                    if st.form_submit_button("Add Word"):
+                        if _aw:
+                            insert_row("rhymes", {"word": _aw.strip(), "rhyme_group": _gd[_sel]})
+                            st.success(f"Added '{_aw.strip()}'")
+                            st.rerun()
+    with _t2:
+        st.caption("One group per line, words separated by commas.")
+        _bulk = st.text_area("Paste groups", height=150, key="bulk_rg")
+        if st.button("Preview", key="prev_rg"):
+            if _bulk.strip():
+                _pv = []
+                for line in _bulk.strip().split("\n"):
+                    ws = [w.strip() for w in line.split(",") if w.strip()]
+                    if ws:
+                        _pv.append(ws)
+                if _pv:
+                    for g in _pv:
+                        st.markdown(f"**Group:** {' / '.join(g)}")
+                    st.session_state["bulk_rg_parsed"] = _pv
+        if st.button("Upload", key="up_rg"):
+            _parsed = st.session_state.get("bulk_rg_parsed", [])
+            if not _parsed:
+                st.error("Preview first.")
+            else:
+                _nid = int(rhyme_df["rhyme_group"].max()) + 1 if not rhyme_df.empty else 1
+                _rows = []
+                for gw in _parsed:
+                    for w in gw:
+                        _rows.append({"word": w, "rhyme_group": _nid})
+                    _nid += 1
+                if _rows:
+                    insert_rows("rhymes", _rows)
+                    st.success(f"Uploaded {len(_parsed)} groups ({len(_rows)} words).")
+                    st.session_state.pop("bulk_rg_parsed", None)
+                    st.rerun()

@@ -1,16 +1,42 @@
 import streamlit as st
 import pandas as pd
+import json
+import colorsys
 from datetime import date, timedelta, datetime
 from zoneinfo import ZoneInfo
 import urllib.request
-from db import fetch_all, insert_row, delete_row, update_row
+from db import fetch_all, insert_row, delete_row, update_row, get_setting
 from auth import require_login
 from constants import ACTIVITY_TYPES, TIME_SLOTS, TIME_DISPLAY
+from weather import fetch_weather, weather_category, best_run_hour, fmt_hour
 
 st.set_page_config(page_title="My Dashboard", layout="wide")
 require_login()
 
 today = datetime.now(ZoneInfo("America/Indiana/Indianapolis")).date()
+
+
+def _colors_go(a_colors, b_colors):
+    if not a_colors or not b_colors:
+        return True
+    for c1 in a_colors:
+        h1 = c1.lstrip("#")
+        r1, g1, b1 = int(h1[:2], 16) / 255, int(h1[2:4], 16) / 255, int(h1[4:6], 16) / 255
+        hu1, li1, sa1 = colorsys.rgb_to_hls(r1, g1, b1)
+        sa1 *= 100; li1 *= 100; hu1 *= 360
+        if sa1 < 12 or li1 < 12 or li1 > 88:
+            return True
+        for c2 in b_colors:
+            h2 = c2.lstrip("#")
+            r2, g2, b2 = int(h2[:2], 16) / 255, int(h2[2:4], 16) / 255, int(h2[4:6], 16) / 255
+            hu2, li2, sa2 = colorsys.rgb_to_hls(r2, g2, b2)
+            sa2 *= 100; li2 *= 100; hu2 *= 360
+            if sa2 < 12 or li2 < 12 or li2 > 88:
+                return True
+            hd = min(abs(hu1 - hu2), 360 - abs(hu1 - hu2))
+            if hd < 40 or 150 < hd < 210:
+                return True
+    return False
 
 SCHOOL_SCHEDULE = [
     {"name": "CS 25000 Lab", "days": [3], "time": "9:30 - 11:20 AM", "range_start": "2026-08-27", "range_end": "2026-12-10", "room": "SL 251"},
@@ -181,6 +207,74 @@ m3.metric("Runs", f"{_wk_run_done}/{_wk_run_total}" if _wk_run_total else "0")
 m4.metric("Reading", len(reading_books))
 
 st.divider()
+
+# --- Outfit suggestion + best run time ---
+if is_viewing_today:
+    _wloc_raw = get_setting("wardrobe_location")
+    if _wloc_raw:
+        try:
+            _wloc = json.loads(_wloc_raw)
+            _wlat, _wlon = _wloc["lat"], _wloc["lon"]
+        except Exception:
+            _wlat, _wlon = None, None
+
+        if _wlat and _wlon:
+            @st.cache_data(ttl=300)
+            def _dash_weather(lat, lon):
+                return fetch_weather(lat, lon, days=1)
+
+            _dwx = _dash_weather(_wlat, _wlon)
+            if _dwx and "hourly" in _dwx:
+                _dtemps = _dwx["hourly"]["temperature_2m"]
+                _dhumids = _dwx["hourly"]["relative_humidity_2m"]
+                _dprecip = _dwx["hourly"].get("precipitation_probability", [0] * len(_dtemps))
+                _dnow = datetime.now().hour
+                _dcur_t = _dtemps[min(_dnow, len(_dtemps) - 1)]
+                _dcat = weather_category(_dcur_t)
+
+                _has_run_today = False
+                if not focus_runs.empty:
+                    for _, _fr in focus_runs.iterrows():
+                        _fwo = _fr.get("workout", "")
+                        if isinstance(_fwo, str) and _fwo.strip() and not _fwo.startswith("Rest") and not _fr.get("completed"):
+                            _has_run_today = True
+                            break
+
+                try:
+                    _dash_ward = fetch_all("wardrobe_items", order_col="created_at")
+                except Exception:
+                    _dash_ward = []
+
+                if _dash_ward:
+                    _dtops = [i for i in _dash_ward if i.get("category") == "Tops" and not i.get("is_layer") and _dcat in (i.get("weather_tags") or [])]
+                    _dbots = [i for i in _dash_ward if i.get("category") == "Bottoms" and _dcat in (i.get("weather_tags") or [])]
+                    _dfit = None
+                    for _dt in _dtops:
+                        for _db in _dbots:
+                            if _colors_go(_dt.get("colors"), _db.get("colors")):
+                                _dfit = (_dt, _db)
+                                break
+                        if _dfit:
+                            break
+                    if _dfit:
+                        st.markdown(
+                            f'<div style="border-left:3px solid #9C27B0;padding:4px 8px;margin:2px 0;border-radius:3px;">'
+                            f'<span style="color:#9C27B0;font-size:0.85em;">{_dcur_t:.0f}°F · {_dcat.title()}</span> '
+                            f'{_dfit[0]["name"]} + {_dfit[1]["name"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                if _has_run_today:
+                    _dbest = best_run_hour(_dtemps, _dhumids, _dprecip, _dnow)
+                    if _dbest is not None:
+                        _dbt = _dtemps[_dbest]
+                        _dbh = _dhumids[_dbest]
+                        st.markdown(
+                            f'<div style="border-left:3px solid #4CAF50;padding:4px 8px;margin:2px 0;border-radius:3px;">'
+                            f'<span style="color:#4CAF50;font-size:0.85em;">Best Run</span> '
+                            f'{fmt_hour(_dbest)} — {_dbt:.0f}°F, {_dbh}% humidity</div>',
+                            unsafe_allow_html=True,
+                        )
 
 # --- Schedule for focused day ---
 focus_cal = [e for e in cal_events if e["date"] == focus_str
