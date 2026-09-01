@@ -7,7 +7,7 @@ def fetch_weather(lat, lon, days=3):
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}"
-        f"&hourly=temperature_2m,relative_humidity_2m,precipitation_probability"
+        f"&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability"
         f"&temperature_unit=fahrenheit&timezone=auto&forecast_days={days}"
     )
     try:
@@ -45,11 +45,11 @@ def weather_category(temp_f):
     return "cold"
 
 
-def best_outdoor_hour(temps, humids, precip, now_hour, earliest=6, latest=21):
+def best_outdoor_hour(temps, humids, precip, now_hour, earliest=6, latest=21, apparent=None):
     best_hour = None
     best_score = float("inf")
     for hi in range(max(now_hour, earliest), min(latest + 1, len(temps))):
-        t = temps[hi]
+        t = apparent[hi] if apparent and hi < len(apparent) else temps[hi]
         h = humids[hi]
         p = precip[hi] if hi < len(precip) else 0
         score = abs(t - 72) + (h * 0.5) + (p * 0.3)
@@ -59,11 +59,11 @@ def best_outdoor_hour(temps, humids, precip, now_hour, earliest=6, latest=21):
     return best_hour
 
 
-def best_run_hour(temps, humids, precip, now_hour, deadline=21):
+def best_run_hour(temps, humids, precip, now_hour, deadline=21, apparent=None):
     best_hour = None
     best_score = float("inf")
     for hi in range(max(now_hour, 5), min(deadline + 1, len(temps))):
-        t = temps[hi]
+        t = apparent[hi] if apparent and hi < len(apparent) else temps[hi]
         h = humids[hi]
         p = precip[hi] if hi < len(precip) else 0
         score = abs(t - 65) + (h * 0.7) + (p * 0.5)

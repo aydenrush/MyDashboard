@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import pronouncing
 from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -40,6 +41,9 @@ def _count_syllables(word):
     word = re.sub(r'[^a-z]', '', word.lower())
     if not word:
         return 0
+    phones = pronouncing.phones_for_word(word)
+    if phones:
+        return pronouncing.syllable_count(phones[0])
     count = 0
     prev_vowel = False
     for ch in word:
@@ -64,7 +68,7 @@ def _last_word(line):
     return words[-1].lower() if words else ""
 
 
-def _find_rhymes(word, rdf):
+def _find_rhymes_db(word, rdf):
     if rdf.empty or not word:
         return []
     matches = rdf[rdf["word"].str.lower() == word.lower()]
@@ -86,13 +90,36 @@ def _find_rhymes(word, rdf):
     return results
 
 
-def _detect_scheme(lines, rdf):
-    if rdf.empty:
+def _find_rhymes_cmu(word):
+    if not word:
         return []
+    return pronouncing.rhymes(word.lower())
+
+
+def _find_rhymes(word, rdf):
+    db_rhymes = _find_rhymes_db(word, rdf)
+    cmu_rhymes = _find_rhymes_cmu(word)
+    seen = {w.lower() for w in db_rhymes}
+    combined = list(db_rhymes)
+    for w in cmu_rhymes:
+        if w.lower() not in seen:
+            seen.add(w.lower())
+            combined.append(w)
+    return combined
+
+
+def _words_rhyme(a, b):
+    if a == b:
+        return True
+    return a in pronouncing.rhymes(b)
+
+
+def _detect_scheme(lines, rdf):
     end_words = [_last_word(l) for l in lines]
     group_map = {}
-    for _, row in rdf.iterrows():
-        group_map.setdefault(row["word"].lower(), set()).add(row["rhyme_group"])
+    if not rdf.empty:
+        for _, row in rdf.iterrows():
+            group_map.setdefault(row["word"].lower(), set()).add(row["rhyme_group"])
     next_label = 0
     result = []
     for i, word in enumerate(end_words):
@@ -103,7 +130,11 @@ def _detect_scheme(lines, rdf):
         assigned = False
         for j in range(i):
             prev_groups = group_map.get(end_words[j], set())
-            if word_groups & prev_groups or word == end_words[j]:
+            if word_groups & prev_groups and word_groups:
+                result.append(result[j])
+                assigned = True
+                break
+            if _words_rhyme(word, end_words[j]):
                 result.append(result[j])
                 assigned = True
                 break
@@ -128,19 +159,21 @@ with tool_left:
     if _rf.strip():
         _word = _rf.strip()
         _wsyl = _count_syllables(_word)
-        _rhymes = _find_rhymes(_word, rhyme_df)
-        if _rhymes:
+        _db_rhymes = _find_rhymes_db(_word, rhyme_df)
+        _cmu_rhymes = _find_rhymes_cmu(_word)
+        _db_set = {w.lower() for w in _db_rhymes}
+        _all_rhymes = list(_db_rhymes) + [w for w in _cmu_rhymes if w.lower() not in _db_set]
+        if _all_rhymes:
             _by_syl = defaultdict(list)
-            for r in _rhymes:
+            for r in _all_rhymes:
                 _by_syl[_count_syllables(r)].append(r)
-            st.markdown(f"**{len(_rhymes)} rhymes** for *{_word}* ({_wsyl} syl)")
+            _src = f"{len(_db_rhymes)} yours + {len(_all_rhymes) - len(_db_rhymes)} CMU" if _db_rhymes else f"{len(_all_rhymes)} CMU"
+            st.markdown(f"**{len(_all_rhymes)} rhymes** for *{_word}* ({_wsyl} syl) — {_src}")
             for sc in sorted(_by_syl.keys()):
                 st.caption(f"{sc} syl — {' / '.join(_by_syl[sc])}")
-            st.code(" / ".join(_rhymes), language=None)
-        elif not rhyme_df.empty:
-            st.caption(f"No rhymes for *{_word}* in your database ({_wsyl} syl)")
+            st.code(" / ".join(_all_rhymes), language=None)
         else:
-            st.caption("No rhyme data loaded.")
+            st.caption(f"No rhymes found for *{_word}* ({_wsyl} syl)")
 
 with tool_right:
     st.markdown("##### Syllable Counter")
@@ -186,7 +219,7 @@ if _paste.strip():
         _ts = sum(_line_syllables(b) for b in _bars)
         _avg = _ts / len(_bars)
 
-        _scheme = _detect_scheme(_bars, rhyme_df) if not rhyme_df.empty else []
+        _scheme = _detect_scheme(_bars, rhyme_df)
         _rhy_n = sum(1 for l in _scheme if _scheme.count(l) > 1 and l != "-") if _scheme else 0
         _density = _rhy_n / len(_scheme) * 100 if _scheme else 0
 
@@ -222,23 +255,22 @@ if _paste.strip():
                 x="Bar", y="Syllables", color="#FF6B35",
             )
 
-        if not rhyme_df.empty:
-            _unrhymed = []
-            for i, bar in enumerate(_bars):
-                lw = _last_word(bar)
-                if not lw:
-                    continue
-                lbl = _scheme[i] if i < len(_scheme) else "-"
-                if not (_scheme.count(lbl) > 1 and lbl != "-"):
-                    _unrhymed.append(lw)
-            if _unrhymed:
-                with st.expander(f"Rhyme Suggestions ({len(_unrhymed)} unrhymed endings)"):
-                    for word in _unrhymed[-8:]:
-                        rh = _find_rhymes(word, rhyme_df)
-                        if rh:
-                            st.code(f"{word} → {' / '.join(rh[:10])}", language=None)
-                        else:
-                            st.caption(f"**{word}** — not in DB")
+        _unrhymed = []
+        for i, bar in enumerate(_bars):
+            lw = _last_word(bar)
+            if not lw:
+                continue
+            lbl = _scheme[i] if i < len(_scheme) else "-"
+            if not (_scheme.count(lbl) > 1 and lbl != "-"):
+                _unrhymed.append(lw)
+        if _unrhymed:
+            with st.expander(f"Rhyme Suggestions ({len(_unrhymed)} unrhymed endings)"):
+                for word in _unrhymed[-8:]:
+                    rh = _find_rhymes(word, rhyme_df)
+                    if rh:
+                        st.code(f"{word} → {' / '.join(rh[:10])}", language=None)
+                    else:
+                        st.caption(f"**{word}** — no rhymes found")
 
         # --- save / update ---
         _save_col1, _save_col2 = st.columns(2)

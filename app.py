@@ -235,11 +235,13 @@ if is_viewing_today:
             _dwx = _dash_weather(_wlat, _wlon)
             if _dwx and "hourly" in _dwx:
                 _dtemps = _dwx["hourly"]["temperature_2m"]
+                _dapparent = _dwx["hourly"].get("apparent_temperature", _dtemps)
                 _dhumids = _dwx["hourly"]["relative_humidity_2m"]
                 _dprecip = _dwx["hourly"].get("precipitation_probability", [0] * len(_dtemps))
                 _dnow = datetime.now().hour
                 _dcur_t = _dtemps[min(_dnow, len(_dtemps) - 1)]
-                _dcat = weather_category(_dcur_t)
+                _dcur_f = _dapparent[min(_dnow, len(_dapparent) - 1)]
+                _dcat = weather_category(_dcur_f)
 
                 _has_run_today = False
                 if not focus_runs.empty:
@@ -266,22 +268,25 @@ if is_viewing_today:
                         if _dfit:
                             break
                     if _dfit:
+                        _feels_note = f" (feels {_dcur_f:.0f}°F)" if abs(_dcur_f - _dcur_t) >= 2 else ""
                         st.markdown(
                             f'<div style="border-left:3px solid #9C27B0;padding:4px 8px;margin:2px 0;border-radius:3px;">'
-                            f'<span style="color:#9C27B0;font-size:0.85em;">{_dcur_t:.0f}°F · {_dcat.title()}</span> '
+                            f'<span style="color:#9C27B0;font-size:0.85em;">{_dcur_t:.0f}°F{_feels_note} · {_dcat.title()}</span> '
                             f'{_dfit[0]["name"]} + {_dfit[1]["name"]}</div>',
                             unsafe_allow_html=True,
                         )
 
                 if _has_run_today:
-                    _dbest = best_run_hour(_dtemps, _dhumids, _dprecip, _dnow)
+                    _dbest = best_run_hour(_dtemps, _dhumids, _dprecip, _dnow, apparent=_dapparent)
                     if _dbest is not None:
                         _dbt = _dtemps[_dbest]
+                        _dbf = _dapparent[_dbest]
                         _dbh = _dhumids[_dbest]
+                        _feels_note = f" (feels {_dbf:.0f}°F)" if abs(_dbf - _dbt) >= 2 else ""
                         st.markdown(
                             f'<div style="border-left:3px solid #4CAF50;padding:4px 8px;margin:2px 0;border-radius:3px;">'
                             f'<span style="color:#4CAF50;font-size:0.85em;">Best Run</span> '
-                            f'{fmt_hour(_dbest)} — {_dbt:.0f}°F, {_dbh}% humidity</div>',
+                            f'{fmt_hour(_dbest)} — {_dbt:.0f}°F{_feels_note}, {_dbh}% humidity</div>',
                             unsafe_allow_html=True,
                         )
 

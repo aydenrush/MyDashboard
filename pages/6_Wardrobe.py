@@ -165,15 +165,19 @@ if _saved_loc:
 
 _weather_cat = None
 _current_temp = None
+_current_feels = None
 if _lat and _lon:
     _wx = fetch_weather(_lat, _lon, days=1)
     if _wx and "hourly" in _wx:
         _now_h = datetime.now().hour
         _current_temp = _wx["hourly"]["temperature_2m"][min(_now_h, 23)]
-        _weather_cat = weather_category(_current_temp)
+        _apparent = _wx["hourly"].get("apparent_temperature", _wx["hourly"]["temperature_2m"])
+        _current_feels = _apparent[min(_now_h, 23)]
+        _weather_cat = weather_category(_current_feels)
 
 if _weather_cat and _current_temp is not None:
-    st.caption(f"{_current_temp:.0f}°F{f' in {_city}' if _city else ''} — dressing for **{_weather_cat}**")
+    _feels_note = f" (feels {_current_feels:.0f}°F)" if _current_feels is not None and abs(_current_feels - _current_temp) >= 2 else ""
+    st.caption(f"{_current_temp:.0f}°F{_feels_note}{f' in {_city}' if _city else ''} — dressing for **{_weather_cat}**")
 
 # ============================================================
 # BUILD AN OUTFIT

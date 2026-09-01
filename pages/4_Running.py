@@ -140,18 +140,21 @@ if _has_data:
             _wx = fetch_weather(_loc["lat"], _loc["lon"], days=1)
             if _wx and "hourly" in _wx:
                 _wx_temps = _wx["hourly"]["temperature_2m"]
+                _wx_apparent = _wx["hourly"].get("apparent_temperature", _wx_temps)
                 _wx_humids = _wx["hourly"]["relative_humidity_2m"]
                 _wx_precip = _wx["hourly"].get("precipitation_probability", [0] * 24)
                 _now_h = datetime.now().hour
-                _br = best_run_hour(_wx_temps, _wx_humids, _wx_precip, _now_h)
+                _br = best_run_hour(_wx_temps, _wx_humids, _wx_precip, _now_h, apparent=_wx_apparent)
                 if _br is not None:
                     _br_t = _wx_temps[_br]
+                    _br_f = _wx_apparent[_br]
                     _br_h = _wx_humids[_br]
                     _br_p = _wx_precip[_br] if _br < len(_wx_precip) else 0
                     _rain_note = f", {_br_p}% rain" if _br_p > 0 else ""
+                    _feels_note = f" (feels {_br_f:.0f}°F)" if abs(_br_f - _br_t) >= 2 else ""
                     st.success(
                         f"Best time to run: **{fmt_hour(_br)}** — "
-                        f"{_br_t:.0f}°F, {_br_h}% humidity{_rain_note}"
+                        f"{_br_t:.0f}°F{_feels_note}, {_br_h}% humidity{_rain_note}"
                     )
         except Exception:
             pass
@@ -736,7 +739,7 @@ elif _has_logs:
                 _yr = _run["date"].year
                 if _yr != _cur_year:
                     _cur_year = _yr
-                    _yr_runs = _rest_runs[_rest_runs["date"].dt.year == _yr]
+                    _yr_runs = _rest_runs[_rest_runs["date"].apply(lambda d: d.year) == _yr]
                     _yr_miles = _yr_runs["distance_miles"].sum()
                     st.markdown(f"**{_yr}** — {len(_yr_runs)} runs, {_yr_miles:.1f} mi")
                 _dist = f"{_run['distance_miles']:.2f} mi"
@@ -806,7 +809,8 @@ def _parse_gpx(file_bytes):
     if not _route:
         _route = _gpx.name
 
-    _gpx_date = _t0.date() if _t0 else today
+    _tz = ZoneInfo("America/Indiana/Indianapolis")
+    _gpx_date = _t0.astimezone(_tz).date() if _t0 else today
 
     return {
         "date": _gpx_date,
