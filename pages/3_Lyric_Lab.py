@@ -735,42 +735,112 @@ with st.expander(_arch_label):
 # RHYME DATABASE
 # ============================================================
 
-_rdb_ct = f" ({len(rhyme_df)} words, {rhyme_df['rhyme_group'].nunique()} groups)" if not rhyme_df.empty else ""
-with st.expander(f"Rhyme Database{_rdb_ct}"):
+def _sound_label(word):
+    if " " in word:
+        parts = word.split()
+        last = parts[-1]
+    else:
+        last = word
+    phones = pronouncing.phones_for_word(last.lower())
+    if phones:
+        rp = pronouncing.rhyming_part(phones[0])
+        return "/" + re.sub(r'\d', '', rp) + "/"
+    return None
+
+
+def _entry_tag(word):
+    if " " in word:
+        return "phrase"
+    if not pronouncing.phones_for_word(word.lower()):
+        return "slang"
+    return None
+
+
+_rdb_ct = f" ({len(rhyme_df)} entries, {rhyme_df['rhyme_group'].nunique()} sets)" if not rhyme_df.empty else ""
+with st.expander(f"Custom Rhymes{_rdb_ct}"):
+    st.caption("Teach the analyzer rhymes it can't detect: phrases, slang, your pronunciation.")
+
+    with st.form("add_rhyme_set"):
+        _nw = st.text_input(
+            "Add rhyme set",
+            placeholder="orange, door hinge, four inch",
+        )
+        if st.form_submit_button("Add"):
+            _words = [w.strip() for w in _nw.split(",") if w.strip()]
+            if len(_words) >= 2:
+                _ng = int(rhyme_df["rhyme_group"].max()) + 1 if not rhyme_df.empty else 1
+                for w in _words:
+                    insert_row("rhymes", {"word": w, "rhyme_group": _ng})
+                st.success(f"Added: {' / '.join(_words)}")
+                st.rerun()
+            elif _words:
+                st.error("Need at least 2 words/phrases to form a rhyme set.")
+
     if not rhyme_df.empty:
-        _dbq = st.text_input("Search", placeholder="Search...", key="rdb_search")
-        _groups = rhyme_df.groupby("rhyme_group")
-        _shown = 0
-        for gid, gdf in _groups:
+        _dbq = st.text_input("Filter", placeholder="Search...", key="rdb_search")
+
+        _sound_groups = defaultdict(list)
+        for gid, gdf in rhyme_df.groupby("rhyme_group"):
             words = gdf["word"].tolist()
-            if _dbq and not any(_dbq.lower() in w.lower() for w in words):
+            first_label = None
+            for w in words:
+                first_label = _sound_label(w)
+                if first_label:
+                    break
+            _sound_groups[first_label or "?"].append((gid, gdf, words))
+
+        _shown = 0
+        for sound_key in sorted(_sound_groups, key=lambda x: (x == "?", x)):
+            sets_in_sound = _sound_groups[sound_key]
+            if _dbq:
+                sets_in_sound = [(gid, gdf, ws) for gid, gdf, ws in sets_in_sound
+                                 if any(_dbq.lower() in w.lower() for w in ws)]
+            if not sets_in_sound:
                 continue
-            _shown += 1
-            hl = [f"**{w}**" if _dbq and _dbq.lower() in w.lower() else w for w in words]
-            gc1, gc2 = st.columns([8, 2])
-            gc1.markdown(" / ".join(hl))
-            with gc2.popover("Edit"):
-                for _, row in gdf.iterrows():
-                    ec1, ec2, ec3 = st.columns([4, 2, 1])
-                    nw = ec1.text_input("W", value=row["word"], key=f"erw_{row['id']}", label_visibility="collapsed")
-                    if ec2.button("Save", key=f"srw_{row['id']}"):
-                        if nw.strip() and nw.strip() != row["word"]:
-                            update_row("rhymes", row["id"], {"word": nw.strip()})
+
+            st.markdown(f"**{sound_key}**")
+            for gid, gdf, words in sets_in_sound:
+                _shown += 1
+                tags = []
+                for w in words:
+                    t = _entry_tag(w)
+                    tag_str = f" `{t}`" if t else ""
+                    if _dbq and _dbq.lower() in w.lower():
+                        tags.append(f"**{w}**{tag_str}")
+                    else:
+                        tags.append(f"{w}{tag_str}")
+                gc1, gc2, gc3 = st.columns([7, 1, 1])
+                gc1.markdown(" / ".join(tags))
+                with gc2.popover("Edit"):
+                    for _, row in gdf.iterrows():
+                        ec1, ec2, ec3 = st.columns([4, 2, 1])
+                        nw = ec1.text_input("W", value=row["word"], key=f"erw_{row['id']}", label_visibility="collapsed")
+                        if ec2.button("Save", key=f"srw_{row['id']}"):
+                            if nw.strip() and nw.strip() != row["word"]:
+                                update_row("rhymes", row["id"], {"word": nw.strip()})
+                                st.rerun()
+                        ck = f"cdrw_{row['id']}"
+                        if st.session_state.get(ck):
+                            st.warning(f"Delete **{row['word']}**?")
+                            yc, nc = st.columns(2)
+                            if yc.button("Yes", key=f"yrw_{row['id']}"):
+                                delete_row("rhymes", row["id"])
+                                st.session_state.pop(ck, None)
+                                st.rerun()
+                            if nc.button("No", key=f"nrw_{row['id']}"):
+                                st.session_state.pop(ck, None)
+                                st.rerun()
+                        elif ec3.button("X", key=f"drw_{row['id']}"):
+                            st.session_state[ck] = True
                             st.rerun()
-                    ck = f"cdrw_{row['id']}"
-                    if st.session_state.get(ck):
-                        st.warning(f"Delete **{row['word']}**?")
-                        yc, nc = st.columns(2)
-                        if yc.button("Yes", key=f"yrw_{row['id']}"):
-                            delete_row("rhymes", row["id"])
-                            st.session_state.pop(ck, None)
+                _add_key = f"add_to_{gid}"
+                with gc3.popover("+"):
+                    _aw = st.text_input("Add word/phrase", key=f"aw_{gid}")
+                    if st.button("Add", key=f"ab_{gid}"):
+                        if _aw.strip():
+                            insert_row("rhymes", {"word": _aw.strip(), "rhyme_group": gid})
                             st.rerun()
-                        if nc.button("No", key=f"nrw_{row['id']}"):
-                            st.session_state.pop(ck, None)
-                            st.rerun()
-                    elif ec3.button("X", key=f"drw_{row['id']}"):
-                        st.session_state[ck] = True
-                        st.rerun()
+
         if _dbq and _shown == 0:
             st.caption("No matches.")
 
@@ -779,62 +849,3 @@ with st.expander(f"Rhyme Database{_rdb_ct}"):
             rhyme_df[["rhyme_group", "word"]].rename(columns={"rhyme_group": "Group", "word": "Word"}).to_csv(index=False),
             "rhymes.csv", "text/csv", key="dl_rhymes",
         )
-
-    _t1, _t2 = st.tabs(["Add Group", "Bulk Import"])
-    with _t1:
-        ac1, ac2 = st.columns(2)
-        with ac1:
-            with st.form("add_rg"):
-                _nw = st.text_input("New group (comma-separated)", placeholder="cat, hat, bat")
-                if st.form_submit_button("Add Group"):
-                    if _nw:
-                        _ng = int(rhyme_df["rhyme_group"].max()) + 1 if not rhyme_df.empty else 1
-                        for w in _nw.split(","):
-                            w = w.strip()
-                            if w:
-                                insert_row("rhymes", {"word": w, "rhyme_group": _ng})
-                        st.success("Added.")
-                        st.rerun()
-        with ac2:
-            if not rhyme_df.empty:
-                with st.form("add_to_grp"):
-                    _gd = {}
-                    for gid, gdf in rhyme_df.groupby("rhyme_group"):
-                        _gd[", ".join(gdf["word"].tolist()[:4])] = gid
-                    _sel = st.selectbox("Add to group", list(_gd.keys()))
-                    _aw = st.text_input("New word")
-                    if st.form_submit_button("Add Word"):
-                        if _aw:
-                            insert_row("rhymes", {"word": _aw.strip(), "rhyme_group": _gd[_sel]})
-                            st.success(f"Added '{_aw.strip()}'")
-                            st.rerun()
-    with _t2:
-        st.caption("One group per line, words separated by commas.")
-        _bulk = st.text_area("Paste groups", height=150, key="bulk_rg")
-        if st.button("Preview", key="prev_rg"):
-            if _bulk.strip():
-                _pv = []
-                for line in _bulk.strip().split("\n"):
-                    ws = [w.strip() for w in line.split(",") if w.strip()]
-                    if ws:
-                        _pv.append(ws)
-                if _pv:
-                    for g in _pv:
-                        st.markdown(f"**Group:** {' / '.join(g)}")
-                    st.session_state["bulk_rg_parsed"] = _pv
-        if st.button("Upload", key="up_rg"):
-            _parsed = st.session_state.get("bulk_rg_parsed", [])
-            if not _parsed:
-                st.error("Preview first.")
-            else:
-                _nid = int(rhyme_df["rhyme_group"].max()) + 1 if not rhyme_df.empty else 1
-                _rows = []
-                for gw in _parsed:
-                    for w in gw:
-                        _rows.append({"word": w, "rhyme_group": _nid})
-                    _nid += 1
-                if _rows:
-                    insert_rows("rhymes", _rows)
-                    st.success(f"Uploaded {len(_parsed)} groups ({len(_rows)} words).")
-                    st.session_state.pop("bulk_rg_parsed", None)
-                    st.rerun()
