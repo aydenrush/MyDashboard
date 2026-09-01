@@ -208,6 +208,15 @@ m4.metric("Reading", len(reading_books))
 
 st.divider()
 
+# --- Schedule for focused day ---
+focus_cal = [e for e in cal_events if e["date"] == focus_str
+             and not any(kw in e["title"] for kw in class_keywords)]
+focus_classes = [cls for cls in SCHOOL_SCHEDULE
+                 if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
+                 and focus_date.weekday() in cls["days"]]
+focus_acts = activities_df[activities_df["date"] == focus_str] if not activities_df.empty else pd.DataFrame()
+focus_runs = running_df[running_df["date"] == focus_date] if not running_df.empty else pd.DataFrame()
+
 # --- Outfit suggestion + best run time ---
 if is_viewing_today:
     _wloc_raw = get_setting("wardrobe_location")
@@ -275,15 +284,6 @@ if is_viewing_today:
                             f'{fmt_hour(_dbest)} — {_dbt:.0f}°F, {_dbh}% humidity</div>',
                             unsafe_allow_html=True,
                         )
-
-# --- Schedule for focused day ---
-focus_cal = [e for e in cal_events if e["date"] == focus_str
-             and not any(kw in e["title"] for kw in class_keywords)]
-focus_classes = [cls for cls in SCHOOL_SCHEDULE
-                 if date.fromisoformat(cls["range_start"]) <= focus_date <= date.fromisoformat(cls["range_end"])
-                 and focus_date.weekday() in cls["days"]]
-focus_acts = activities_df[activities_df["date"] == focus_str] if not activities_df.empty else pd.DataFrame()
-focus_runs = running_df[running_df["date"] == focus_date] if not running_df.empty else pd.DataFrame()
 
 has_schedule = bool(focus_cal or focus_classes or not focus_acts.empty or not focus_runs.empty)
 
