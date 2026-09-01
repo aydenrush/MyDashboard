@@ -323,6 +323,10 @@ st.markdown("##### Analyze")
 
 _loaded_id = st.session_state.get("loaded_lyric_id")
 _loaded_title = st.session_state.get("loaded_lyric_title")
+
+if "_pending_paste" in st.session_state:
+    st.session_state["paste_area"] = st.session_state.pop("_pending_paste")
+
 if _loaded_id:
     _lc1, _lc2 = st.columns([8, 1])
     _lc1.caption(f"Editing: **{_loaded_title}**")
@@ -499,7 +503,7 @@ with st.expander(_arch_label):
             if ac2.button("Load", key=f"ld_{_ly['id']}"):
                 st.session_state["loaded_lyric_id"] = int(_ly["id"])
                 st.session_state["loaded_lyric_title"] = _ly["title"]
-                st.session_state["paste_area"] = _ct
+                st.session_state["_pending_paste"] = _ct
                 st.rerun()
 
             _dk = f"cdla_{_ly['id']}"
