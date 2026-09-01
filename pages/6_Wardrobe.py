@@ -3,12 +3,12 @@ import colorsys
 import json
 import base64
 import io
-import math
 from datetime import datetime
 from collections import Counter
 from PIL import Image
 from auth import require_login
-from db import fetch_all, insert_row, delete_row, get_setting, set_setting
+from db import fetch_all, insert_row, delete_row, get_setting
+from weather import fetch_weather, weather_category
 
 st.set_page_config(page_title="Wardrobe", layout="wide")
 require_login()
@@ -130,47 +130,6 @@ def colors_compatible(c1_hex, c2_hex):
 
 # ---------- weather ----------
 
-def _fetch_weather(lat, lon):
-    import urllib.request
-    url = (
-        f"https://api.open-meteo.com/v1/forecast?"
-        f"latitude={lat}&longitude={lon}"
-        f"&hourly=temperature_2m,relative_humidity_2m,precipitation_probability"
-        f"&temperature_unit=fahrenheit&timezone=auto&forecast_days=1"
-    )
-    try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            return json.loads(resp.read())
-    except Exception:
-        return None
-
-
-def _weather_category(temp_f):
-    if temp_f >= 85:
-        return "hot"
-    if temp_f >= 70:
-        return "warm"
-    if temp_f >= 55:
-        return "mild"
-    if temp_f >= 40:
-        return "cool"
-    return "cold"
-
-
-def _geocode(city):
-    import urllib.request
-    import urllib.parse
-    url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(city)}&count=1&language=en&format=json"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            data = json.loads(resp.read())
-            if data.get("results"):
-                r = data["results"][0]
-                return r["latitude"], r["longitude"], r.get("name", city)
-    except Exception:
-        pass
-    return None
-
 # ---------- load wardrobe data ----------
 
 try:
@@ -188,6 +147,7 @@ if _wardrobe_data is None:
         "    colors jsonb,\n"
         "    weather_tags jsonb,\n"
         "    image_b64 text,\n"
+        "    is_layer boolean default false,\n"
         "    created_at timestamptz default now()\n"
         ");\n\n"
         "-- RLS\n"
@@ -197,89 +157,16 @@ if _wardrobe_data is None:
     )
     st.stop()
 
-_wardrobe_df = json.dumps(None)
 _items = _wardrobe_data
 
-# ---------- weather section ----------
-
 _saved_loc = get_setting("wardrobe_location")
-_lat, _lon, _city_name = None, None, None
-
+_lat, _lon = None, None
 if _saved_loc:
     try:
         _loc = json.loads(_saved_loc)
-        _lat, _lon, _city_name = _loc["lat"], _loc["lon"], _loc["city"]
+        _lat, _lon = _loc["lat"], _loc["lon"]
     except Exception:
         pass
-
-with st.expander("Weather & Best Time to Go Out", expanded=_lat is not None):
-    _wc1, _wc2 = st.columns([3, 1])
-    _city_input = _wc1.text_input("City", value=_city_name or "", placeholder="e.g. West Lafayette")
-    if _wc2.button("Set Location", key="set_loc"):
-        if _city_input.strip():
-            result = _geocode(_city_input.strip())
-            if result:
-                _lat, _lon, _city_name = result
-                set_setting("wardrobe_location", json.dumps({"lat": _lat, "lon": _lon, "city": _city_name}))
-                st.rerun()
-            else:
-                st.error("City not found")
-
-    if _lat and _lon:
-        weather = _fetch_weather(_lat, _lon)
-        if weather and "hourly" in weather:
-            hours = weather["hourly"]
-            temps = hours["temperature_2m"]
-            humids = hours["relative_humidity_2m"]
-            precip = hours.get("precipitation_probability", [0] * 24)
-            times = hours["time"]
-
-            now_hour = datetime.now().hour
-
-            current_temp = temps[now_hour] if now_hour < len(temps) else temps[-1]
-            current_humid = humids[now_hour] if now_hour < len(humids) else humids[-1]
-            current_precip = precip[now_hour] if now_hour < len(precip) else 0
-            cat = _weather_category(current_temp)
-
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("Now", f"{current_temp:.0f}°F")
-            mc2.metric("Humidity", f"{current_humid}%")
-            mc3.metric("Rain Chance", f"{current_precip}%")
-            mc4.metric("Dress For", cat.title())
-
-            best_hour = None
-            best_score = float("inf")
-            for hi in range(max(now_hour, 6), min(22, len(temps))):
-                t = temps[hi]
-                h = humids[hi]
-                p = precip[hi] if hi < len(precip) else 0
-                comfort = abs(t - 72) + (h * 0.5) + (p * 0.3)
-                if comfort < best_score:
-                    best_score = comfort
-                    best_hour = hi
-
-            if best_hour is not None:
-                _bt = temps[best_hour]
-                _bh = humids[best_hour]
-                _bp = precip[best_hour] if best_hour < len(precip) else 0
-                _period = "AM" if best_hour < 12 else "PM"
-                _disp_hour = best_hour % 12 or 12
-                st.info(
-                    f"Best time to go out: **{_disp_hour} {_period}** — "
-                    f"{_bt:.0f}°F, {_bh}% humidity"
-                    f"{f', {_bp}% rain chance' if _bp > 0 else ''}"
-                )
-
-            high_humid_hours = [i for i in range(len(humids)) if humids[i] >= 70 and i >= now_hour]
-            if high_humid_hours:
-                _hh_start = high_humid_hours[0]
-                _hh_p = "AM" if _hh_start < 12 else "PM"
-                _hh_d = _hh_start % 12 or 12
-                st.warning(f"High humidity ({humids[_hh_start]}%+) starting around {_hh_d} {_hh_p}")
-        else:
-            st.warning("Couldn't fetch weather data")
-
-st.divider()
 
 # ---------- color matcher (original feature) ----------
 
@@ -393,53 +280,72 @@ else:
                             f'<div style="display:flex;gap:4px;margin:4px 0;">{_swatches}</div>',
                             unsafe_allow_html=True,
                         )
+                    _tags_parts = []
+                    if _item.get("is_layer"):
+                        _tags_parts.append("Layer")
                     _wt = _item.get("weather_tags") or []
                     if _wt:
-                        st.caption(", ".join(_wt))
+                        _tags_parts.extend(_wt)
+                    if _tags_parts:
+                        st.caption(", ".join(_tags_parts))
 
 st.divider()
 
 # ---------- outfit suggestions ----------
 
 if _items and _lat:
-    weather = _fetch_weather(_lat, _lon)
+    weather = fetch_weather(_lat, _lon, days=1)
     if weather and "hourly" in weather:
         now_hour = datetime.now().hour
         current_temp = weather["hourly"]["temperature_2m"][min(now_hour, 23)]
-        cat = _weather_category(current_temp)
+        cat = weather_category(current_temp)
 
-        _tops = [it for it in _items if it.get("category") == "Tops" and cat in (it.get("weather_tags") or [])]
+        _base_tops = [it for it in _items if it.get("category") == "Tops" and not it.get("is_layer") and cat in (it.get("weather_tags") or [])]
+        _layers = [it for it in _items if it.get("is_layer") and cat in (it.get("weather_tags") or [])]
         _bots = [it for it in _items if it.get("category") == "Bottoms" and cat in (it.get("weather_tags") or [])]
-        _outer = [it for it in _items if it.get("category") == "Outerwear" and cat in (it.get("weather_tags") or [])]
+        _outer = [it for it in _items if it.get("category") == "Outerwear" and not it.get("is_layer") and cat in (it.get("weather_tags") or [])]
 
-        if _tops and _bots:
+        if _base_tops and _bots:
             with st.expander(f"Outfit Suggestions ({cat.title()} weather, {current_temp:.0f}°F)"):
                 _combos = []
-                for t in _tops:
+                for t in _base_tops:
                     for b in _bots:
                         t_colors = t.get("colors") or []
                         b_colors = b.get("colors") or []
                         if t_colors and b_colors:
-                            if any(colors_compatible(tc, bc) for tc in t_colors for bc in b_colors):
-                                _combos.append((t, b))
-                        else:
-                            _combos.append((t, b))
+                            if not any(colors_compatible(tc, bc) for tc in t_colors for bc in b_colors):
+                                continue
+                        _matching_layers = []
+                        for ly in _layers:
+                            ly_colors = ly.get("colors") or []
+                            if not ly_colors or not t_colors:
+                                _matching_layers.append(ly)
+                            elif any(colors_compatible(lc, tc) for lc in ly_colors for tc in t_colors):
+                                _matching_layers.append(ly)
+                        _combos.append((t, b, _matching_layers))
 
                 if not _combos:
                     st.caption("No color-compatible combos found — try adding more items")
                 else:
-                    for _oi, (_t, _b) in enumerate(_combos[:6]):
-                        _oc1, _oc2 = st.columns(2)
-                        with _oc1:
+                    for _oi, (_t, _b, _lyrs) in enumerate(_combos[:6]):
+                        _ncols = 3 if _lyrs else 2
+                        _ocols = st.columns(_ncols)
+                        with _ocols[0]:
                             if _t.get("image_b64"):
                                 st.image(base64.b64decode(_t["image_b64"]), width=120)
                             st.caption(f"Top: {_t['name']}")
-                        with _oc2:
+                        with _ocols[1]:
                             if _b.get("image_b64"):
                                 st.image(base64.b64decode(_b["image_b64"]), width=120)
                             st.caption(f"Bottom: {_b['name']}")
+                        if _lyrs:
+                            with _ocols[2]:
+                                _best_layer = _lyrs[0]
+                                if _best_layer.get("image_b64"):
+                                    st.image(base64.b64decode(_best_layer["image_b64"]), width=120)
+                                st.caption(f"Layer: {_best_layer['name']}")
                         if _outer:
-                            st.caption(f"Layer: {_outer[0]['name']}")
+                            st.caption(f"Jacket: {_outer[0]['name']}")
                         st.markdown("---")
 
 st.divider()
@@ -451,7 +357,14 @@ with st.expander("Add Item"):
     _ac1, _ac2 = st.columns(2)
     _item_name = _ac1.text_input("Name", placeholder="e.g. Blue Nike Dri-Fit")
     _item_cat = _ac2.selectbox("Category", CATEGORIES)
-    _item_weather = st.multiselect("Suitable weather", WEATHER_TAGS, default=["Warm (70-85)", "Mild (55-70)"])
+    _default_weather = [] if _item_cat in ("Shoes", "Accessories") else ["Warm (70-85)", "Mild (55-70)"]
+    _item_weather = st.multiselect("Suitable weather", WEATHER_TAGS, default=_default_weather)
+    _is_layer = False
+    if _item_cat in ("Tops", "Outerwear"):
+        _is_layer = st.checkbox(
+            "Layering piece",
+            help="Can be worn open/unbuttoned over another top (flannel, hoodie, button-up, etc.)",
+        )
 
     _extracted = []
     _img_b64 = None
@@ -476,6 +389,7 @@ with st.expander("Add Item"):
             "colors": _extracted if _extracted else None,
             "weather_tags": _tags,
             "image_b64": _img_b64,
+            "is_layer": _is_layer,
         })
         st.success(f"Added {_item_name.strip()}!")
         st.rerun()

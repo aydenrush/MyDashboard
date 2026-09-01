@@ -312,7 +312,7 @@ if is_viewing_today and not reading_books.empty:
 
 # --- Active To-Dos ---
 if is_viewing_today and not active_todos.empty:
-    PRIORITY_COLORS = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
+    from constants import PRIORITY_COLORS
     st.markdown("")
     st.caption("To Do")
     for priority in ["high", "medium", "low"]:
@@ -326,7 +326,7 @@ if is_viewing_today and not active_todos.empty:
                 unsafe_allow_html=True,
             )
             if tc2.button("Done", key=f"dash_todo_{row['id']}"):
-                update_row("todos", int(row["id"]), {"completed": True})
+                delete_row("todos", int(row["id"]))
                 st.rerun()
 
 # --- Quick Add ---

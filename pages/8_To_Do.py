@@ -6,8 +6,9 @@ from auth import require_login
 st.set_page_config(page_title="To Do", layout="wide")
 require_login()
 
+from constants import PRIORITY_COLORS
+
 TABLE = "todos"
-PRIORITY_COLORS = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
 
 try:
     data = fetch_all(TABLE, order_col="created_at")
@@ -26,10 +27,6 @@ with st.form("add_todo", clear_on_submit=True):
     if submitted and task.strip():
         insert_row(TABLE, {"task": task.strip(), "priority": priority, "completed": False})
         st.rerun()
-
-if not active.empty:
-    _all_tasks = "\n".join(f"- [{r['priority'].upper()}] {r['task']}" for _, r in active.iterrows())
-    st.code(_all_tasks, language=None)
 
 st.divider()
 
@@ -63,7 +60,7 @@ else:
                         st.session_state[f"edit_{row['id']}"] = False
                         st.rerun()
             else:
-                c1, c2, c3, c4 = st.columns([1, 9, 1, 1])
+                c1, c2, c3, c4 = st.columns([1, 8, 1, 1])
                 if c1.button("✅", key=f"done_{row['id']}"):
                     delete_row(TABLE, int(row["id"]))
                     st.rerun()
@@ -75,6 +72,4 @@ else:
                 if c3.button("✏️", key=f"ed_{row['id']}"):
                     st.session_state[f"edit_{row['id']}"] = True
                     st.rerun()
-                if c4.button("\U0001F5D1", key=f"del_{row['id']}"):
-                    delete_row(TABLE, row["id"])
-                    st.rerun()
+                c4.code(row["task"], language=None)

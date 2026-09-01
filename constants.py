@@ -109,3 +109,5 @@ ACTIVITY_TYPES = {
 
 TIME_SLOTS = ["Morning", "Midday", "Afternoon", "Evening"]
 TIME_DISPLAY = {"Morning": "8 AM", "Midday": "11 AM", "Afternoon": "2 PM", "Evening": "5:30 PM"}
+
+PRIORITY_COLORS = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}

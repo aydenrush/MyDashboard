@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta, datetime
 from zoneinfo import ZoneInfo
-from db import fetch_all, insert_row, insert_rows, update_row, get_supabase
+import json
+from db import fetch_all, insert_row, insert_rows, update_row, get_supabase, get_setting
 from auth import require_login
 from ui_helpers import delete_button
 from constants import ACTIVITY_TYPES
@@ -80,6 +81,31 @@ if _has_data:
         for _, r in past_rest.iterrows():
             update_row("running_schedule", int(r["id"]), {"completed": True})
         df.loc[past_rest.index, "completed"] = True
+
+    # --- Running Weather ---
+    _saved_loc = get_setting("wardrobe_location")
+    if _saved_loc:
+        try:
+            from weather import fetch_weather, best_run_hour, fmt_hour
+            _loc = json.loads(_saved_loc)
+            _wx = fetch_weather(_loc["lat"], _loc["lon"], days=1)
+            if _wx and "hourly" in _wx:
+                _wx_temps = _wx["hourly"]["temperature_2m"]
+                _wx_humids = _wx["hourly"]["relative_humidity_2m"]
+                _wx_precip = _wx["hourly"].get("precipitation_probability", [0] * 24)
+                _now_h = datetime.now().hour
+                _br = best_run_hour(_wx_temps, _wx_humids, _wx_precip, _now_h)
+                if _br is not None:
+                    _br_t = _wx_temps[_br]
+                    _br_h = _wx_humids[_br]
+                    _br_p = _wx_precip[_br] if _br < len(_wx_precip) else 0
+                    _rain_note = f", {_br_p}% rain" if _br_p > 0 else ""
+                    st.success(
+                        f"Best time to run: **{fmt_hour(_br)}** — "
+                        f"{_br_t:.0f}°F, {_br_h}% humidity{_rain_note}"
+                    )
+        except Exception:
+            pass
 
     # --- Today's Workout ---
     today_row = df[df["date"] == today]
