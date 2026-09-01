@@ -168,10 +168,81 @@ _STOP_WORDS = frozenset({
 })
 
 
+_VOWEL_PHONES = frozenset({
+    "AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY",
+    "IH", "IY", "OW", "OY", "UH", "UW",
+})
+
+
+def _count_alliteration(bars):
+    total = 0
+    for bar in bars:
+        words = [w.lower().strip("'") for w in re.findall(r"[a-zA-Z']+", bar)
+                 if w.lower().strip("'") not in _STOP_WORDS and len(w) > 1]
+        starts = defaultdict(int)
+        for w in words:
+            starts[w[0]] += 1
+        for count in starts.values():
+            if count >= 3:
+                total += count
+    return total
+
+
+def _count_similes(bars):
+    total = 0
+    for bar in bars:
+        total += len(re.findall(r'\blike\b', bar, re.IGNORECASE))
+    return total
+
+
+def _unique_ratio(bars):
+    words = []
+    for bar in bars:
+        words.extend(w.lower().strip("'") for w in re.findall(r"[a-zA-Z']+", bar)
+                     if len(w.strip("'")) > 1)
+    if not words:
+        return 0
+    return len(set(words)) / len(words)
+
+
+def _count_multisyl(bars, cmap):
+    count = 0
+    for (bi, s, e), ci in cmap.items():
+        word = bars[bi][s:e].lower().strip("'")
+        phones = pronouncing.phones_for_word(word)
+        if phones:
+            rp = pronouncing.rhyming_part(phones[0])
+            rp_syls = sum(1 for ph in rp.split() if any(c.isdigit() for c in ph))
+            if rp_syls >= 2:
+                count += 1
+    return count
+
+
+def _count_consonance(bars):
+    total = 0
+    for bar in bars:
+        words = [w.lower().strip("'") for w in re.findall(r"[a-zA-Z']+", bar)
+                 if w.lower().strip("'") not in _STOP_WORDS and len(w) > 1]
+        cons = defaultdict(int)
+        for w in words:
+            phones = pronouncing.phones_for_word(w)
+            if phones:
+                seen = set()
+                for ph in phones[0].split():
+                    c = re.sub(r'\d', '', ph)
+                    if c not in _VOWEL_PHONES and c not in seen:
+                        cons[c] += 1
+                        seen.add(c)
+        for count in cons.values():
+            if count >= 3:
+                total += count
+    return total
+
+
 def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
     n = len(bars)
     if n == 0:
-        return 0.0, "?"
+        return 0.0, "?", {}
     rhyme_sc = min(density / 100, 1.0) * 10
     int_per_bar = internal_n / n
     internal_sc = min(int_per_bar / 1.0, 1.0) * 10
@@ -187,8 +258,19 @@ def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
     vocab_sc = min((syl_per_word - 1) / 0.7, 1.0) * 10
     n_clusters = len(set(cmap.values())) if cmap else 0
     cluster_sc = min(n_clusters / max(n * 0.4, 1), 1.0) * 10
-    raw = (rhyme_sc * 0.20 + internal_sc * 0.30 + flow_sc * 0.15
-           + vocab_sc * 0.15 + cluster_sc * 0.20)
+    allit_n = _count_alliteration(bars)
+    simile_n = _count_similes(bars)
+    unique_r = _unique_ratio(bars)
+    multi_n = _count_multisyl(bars, cmap) if cmap else 0
+    conson_n = _count_consonance(bars)
+    allit_bonus = min(allit_n / max(n * 1.5, 1), 1.0) * 1.0
+    simile_bonus = min(simile_n / max(n * 0.3, 1), 1.0) * 0.5
+    multi_bonus = min(multi_n / max(n * 0.5, 1), 1.0) * 1.5
+    conson_bonus = min(conson_n / max(n * 2, 1), 1.0) * 0.5
+    unique_sc = min(unique_r / 0.75, 1.0) * 10
+    raw = (rhyme_sc * 0.18 + internal_sc * 0.25 + flow_sc * 0.12
+           + vocab_sc * 0.10 + cluster_sc * 0.18 + unique_sc * 0.17)
+    raw += allit_bonus + simile_bonus + multi_bonus + conson_bonus
     score = max(0, min(10, raw))
     if score >= 9:
         grade = "S"
@@ -202,7 +284,11 @@ def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
         grade = "D"
     else:
         grade = "F"
-    return round(score, 1), grade
+    extras = {
+        "allit": allit_n, "similes": simile_n, "unique": unique_r,
+        "multi": multi_n, "consonance": conson_n,
+    }
+    return round(score, 1), grade, extras
 
 
 def _rhyme_key(word):
@@ -342,9 +428,10 @@ _paste = st.text_area(
 )
 
 if _paste.strip():
-    _bars = [l for l in _paste.split("\n") if l.strip()]
+    _bars = [re.sub(r'\([^)]*\)', '', l).strip() for l in _paste.split("\n")]
+    _bars = [b for b in _bars if b]
     if _bars:
-        _wc = len(_paste.split())
+        _wc = sum(len(b.split()) for b in _bars)
         _ts = sum(_line_syllables(b) for b in _bars)
         _avg = _ts / len(_bars)
 
@@ -360,17 +447,15 @@ if _paste.strip():
                 _last_word_pos.add((_bi_m, _mts[-1].start(), _mts[-1].end()))
         _internal_n = sum(1 for pos in _cmap if pos not in _last_word_pos)
 
-        _score, _grade = _rate_verse(_bars, _density, _internal_n, _avg, _cmap)
+        _score, _grade, _extras = _rate_verse(_bars, _density, _internal_n, _avg, _cmap)
         _grade_clrs = {"S": "#FFD700", "A": "#4CAF50", "B": "#2196F3", "C": "#FF9800", "D": "#F44336", "F": "#9E9E9E"}
         _gclr = _grade_clrs.get(_grade, "#666")
 
-        s1, s2, s3, s4, s5, s6 = st.columns(6)
+        s1, s2, s3, s4 = st.columns(4)
         s1.metric("Bars", len(_bars))
         s2.metric("Words", _wc)
         s3.metric("Avg/Bar", f"{_avg:.1f}")
-        s4.metric("End Rhyme", f"{_density:.0f}%")
-        s5.metric("Internal", _internal_n)
-        s6.markdown(
+        s4.markdown(
             f'<div style="text-align:center;padding:4px 0;">'
             f'<div style="font-size:0.85em;color:#888;margin-bottom:2px;">Rating</div>'
             f'<span style="font-size:2em;font-weight:800;color:{_gclr};">{_grade}</span>'
@@ -378,6 +463,14 @@ if _paste.strip():
             f'</div>',
             unsafe_allow_html=True,
         )
+        t1, t2, t3, t4, t5, t6, t7 = st.columns(7)
+        t1.metric("End Rhyme", f"{_density:.0f}%")
+        t2.metric("Internal", _internal_n)
+        t3.metric("Multi-syl", _extras["multi"])
+        t4.metric("Allit.", _extras["allit"])
+        t5.metric("Similes", _extras["similes"])
+        t6.metric("Conson.", _extras["consonance"])
+        t7.metric("Unique", f"{_extras['unique']:.0%}")
 
         for i, bar in enumerate(_bars):
             _s = _line_syllables(bar)
