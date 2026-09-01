@@ -775,7 +775,18 @@ def _parse_gpx(file_bytes):
     _dist_mi = _total_dist / 1609.344
 
     _t0, _t1 = _pts[0].time, _pts[-1].time
-    _dur_s = int((_t1 - _t0).total_seconds()) if _t0 and _t1 else 0
+    _elapsed_s = int((_t1 - _t0).total_seconds()) if _t0 and _t1 else 0
+
+    _PAUSE_THRESH = 15
+    _moving_s = 0
+    if _t0 and _t1:
+        for _i in range(1, len(_pts)):
+            _gap = (_pts[_i].time - _pts[_i - 1].time).total_seconds()
+            if _gap < _PAUSE_THRESH:
+                _moving_s += _gap
+        _moving_s = int(_moving_s)
+
+    _dur_s = _moving_s if _moving_s > 0 else _elapsed_s
 
     _up, _ = _gpx.get_uphill_downhill()
     _elev_ft = round((_up or 0) * 3.28084)
@@ -785,6 +796,7 @@ def _parse_gpx(file_bytes):
     if _t0:
         _cum = 0
         _last_t = _t0
+        _split_moving = 0
         _prev = _pts[0]
         _mile = 1
         for _pt in _pts[1:]:
@@ -794,14 +806,18 @@ def _parse_gpx(file_bytes):
                 else _prev.distance_2d(_pt)
             )
             _cum += _d or 0
+            _gap = (_pt.time - _prev.time).total_seconds() if _pt.time and _prev.time else 0
+            if _gap < _PAUSE_THRESH:
+                _split_moving += _gap
             if _cum >= _mile * 1609.344 and _pt.time:
-                _splits.append(int((_pt.time - _last_t).total_seconds()))
+                _splits.append(int(_split_moving))
                 _last_t = _pt.time
+                _split_moving = 0
                 _mile += 1
             _prev = _pt
         _rem = _cum - (_mile - 1) * 1609.344
-        if _rem > 160 and _pts[-1].time and _last_t:
-            _splits.append(int((_pts[-1].time - _last_t).total_seconds()))
+        if _rem > 160 and _split_moving > 0:
+            _splits.append(int(_split_moving))
 
     _route = None
     if _gpx.tracks:
@@ -816,6 +832,7 @@ def _parse_gpx(file_bytes):
         "date": _gpx_date,
         "distance_miles": round(_dist_mi, 2),
         "duration_seconds": _dur_s,
+        "elapsed_seconds": _elapsed_s,
         "pace_seconds": _pace_s,
         "elevation_gain_ft": _elev_ft,
         "splits": _splits if _splits else None,
@@ -834,9 +851,12 @@ with st.expander("Log a Run"):
                 if parsed is None:
                     st.error("No GPS points found in file.")
                 else:
+                    _elapsed_note = ""
+                    if parsed["elapsed_seconds"] > parsed["duration_seconds"] + 10:
+                        _elapsed_note = f" ({_fmt_duration(parsed['elapsed_seconds'])} elapsed)"
                     st.success(
                         f"Parsed: {parsed['distance_miles']:.2f} mi · "
-                        f"{_fmt_duration(parsed['duration_seconds'])} · "
+                        f"{_fmt_duration(parsed['duration_seconds'])} moving{_elapsed_note} · "
                         f"{_fmt_pace(parsed['pace_seconds'])} · "
                         f"↑{parsed['elevation_gain_ft']} ft"
                     )

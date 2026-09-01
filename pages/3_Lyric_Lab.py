@@ -144,6 +144,72 @@ def _detect_scheme(lines, rdf):
     return result
 
 
+_STOP_WORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "is", "it", "i", "me", "my", "we", "he", "she", "be", "do",
+    "so", "no", "if", "up", "as", "by", "am", "are", "was", "has", "had",
+    "not", "that", "this", "with", "from", "they", "them", "their", "you",
+    "your", "all", "can", "will", "just",
+})
+
+
+def _rhyme_key(word):
+    phones = pronouncing.phones_for_word(word.lower())
+    if phones:
+        return pronouncing.rhyming_part(phones[0])
+    return None
+
+
+def _build_rhyme_map(bars, rdf):
+    occs = []
+    for bi, bar in enumerate(bars):
+        for m in re.finditer(r"[a-zA-Z']+", bar):
+            w = m.group().lower().strip("'")
+            if w and len(w) > 1 and w not in _STOP_WORDS:
+                occs.append((bi, m.start(), m.end(), w))
+
+    by_key = defaultdict(list)
+    for occ in occs:
+        rk = _rhyme_key(occ[3])
+        if rk:
+            by_key[rk].append(occ)
+    if not rdf.empty:
+        w2g = defaultdict(set)
+        for _, row in rdf.iterrows():
+            w2g[row["word"].lower()].add(row["rhyme_group"])
+        for occ in occs:
+            for gid in w2g.get(occ[3], set()):
+                by_key[f"_db{gid}"].append(occ)
+
+    raw = []
+    for members in by_key.values():
+        unique = set(m[3] for m in members)
+        bars_hit = set(m[0] for m in members)
+        if len(unique) >= 2 or (len(members) >= 2 and len(bars_hit) >= 2):
+            raw.append(set(members))
+
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(raw)):
+            for j in range(i + 1, len(raw)):
+                words_i = set(m[3] for m in raw[i])
+                words_j = set(m[3] for m in raw[j])
+                if words_i & words_j:
+                    raw[i] |= raw[j]
+                    raw.pop(j)
+                    changed = True
+                    break
+            if changed:
+                break
+
+    cmap = {}
+    for ci, cluster in enumerate(raw):
+        for bi, s, e, w in cluster:
+            cmap[(bi, s, e)] = ci
+    return cmap
+
+
 # ============================================================
 # TOOLS — the reason you tab over from Docs
 # ============================================================
@@ -220,28 +286,50 @@ if _paste.strip():
         _avg = _ts / len(_bars)
 
         _scheme = _detect_scheme(_bars, rhyme_df)
+        _cmap = _build_rhyme_map(_bars, rhyme_df)
         _rhy_n = sum(1 for l in _scheme if _scheme.count(l) > 1 and l != "-") if _scheme else 0
         _density = _rhy_n / len(_scheme) * 100 if _scheme else 0
 
-        s1, s2, s3, s4, s5 = st.columns(5)
+        _last_word_pos = set()
+        for _bi_m, _bar_m in enumerate(_bars):
+            _mts = list(re.finditer(r"[a-zA-Z']+", _bar_m))
+            if _mts:
+                _last_word_pos.add((_bi_m, _mts[-1].start(), _mts[-1].end()))
+        _internal_n = sum(1 for pos in _cmap if pos not in _last_word_pos)
+
+        s1, s2, s3, s4, s5, s6 = st.columns(6)
         s1.metric("Bars", len(_bars))
         s2.metric("Words", _wc)
         s3.metric("Syllables", _ts)
         s4.metric("Avg/Bar", f"{_avg:.1f}")
-        s5.metric("Rhyme %", f"{_density:.0f}%" if _scheme else "—")
+        s5.metric("End Rhyme", f"{_density:.0f}%")
+        s6.metric("Internal", _internal_n)
 
         for i, bar in enumerate(_bars):
             _s = _line_syllables(bar)
             _lbl = _scheme[i] if i < len(_scheme) else "-"
             _ci = ord(_lbl) - 65 if _lbl != "-" else -1
-            _clr = SCHEME_COLORS[_ci % len(SCHEME_COLORS)] if _ci >= 0 else "#666"
-            _bold = _scheme.count(_lbl) > 1 and _lbl != "-" if _scheme else False
+            _lclr = SCHEME_COLORS[_ci % len(SCHEME_COLORS)] if _ci >= 0 else "#666"
+
+            _hl = sorted([(s, e, c) for (b, s, e), c in _cmap.items() if b == i])
+            _parts = []
+            _pos = 0
+            for _hs, _he, _hc in _hl:
+                if _hs > _pos:
+                    _parts.append(bar[_pos:_hs])
+                _hclr = SCHEME_COLORS[_hc % len(SCHEME_COLORS)]
+                _parts.append(f'<span style="color:{_hclr};font-weight:700;">{bar[_hs:_he]}</span>')
+                _pos = _he
+            if _pos < len(bar):
+                _parts.append(bar[_pos:])
+            _bar_html = "".join(_parts)
+
             st.markdown(
                 f'<div style="display:flex;align-items:baseline;gap:10px;margin:3px 0;'
                 f'font-family:monospace;font-size:0.95em;">'
-                f'<span style="color:{_clr};font-weight:700;min-width:18px;text-align:center;">{_lbl}</span>'
+                f'<span style="color:{_lclr};font-weight:700;min-width:18px;text-align:center;">{_lbl}</span>'
                 f'<span style="color:#888;min-width:30px;text-align:right;font-size:0.85em;">{_s}s</span>'
-                f'<span style="font-weight:{"700" if _bold else "400"};">{bar}</span>'
+                f'<span>{_bar_html}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
