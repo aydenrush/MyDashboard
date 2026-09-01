@@ -129,8 +129,19 @@ def _words_rhyme(a, b):
     return False
 
 
+def _end_phrase(line, rdf, max_words=4):
+    words = re.findall(r"[a-zA-Z']+", line)
+    if not words or rdf.empty:
+        return words[-1].lower() if words else ""
+    for n in range(min(max_words, len(words)), 1, -1):
+        phrase = " ".join(w.lower() for w in words[-n:])
+        if any(rdf["word"].str.lower() == phrase):
+            return phrase
+    return words[-1].lower()
+
+
 def _detect_scheme(lines, rdf):
-    end_words = [_last_word(l) for l in lines]
+    end_words = [_end_phrase(l, rdf) for l in lines]
     group_map = {}
     if not rdf.empty:
         for _, row in rdf.iterrows():
@@ -149,7 +160,7 @@ def _detect_scheme(lines, rdf):
                 result.append(result[j])
                 assigned = True
                 break
-            if _words_rhyme(word, end_words[j]):
+            if " " not in word and " " not in end_words[j] and _words_rhyme(word, end_words[j]):
                 result.append(result[j])
                 assigned = True
                 break
@@ -208,8 +219,11 @@ def _unique_ratio(bars):
 def _count_multisyl(bars, cmap):
     count = 0
     for (bi, s, e), ci in cmap.items():
-        word = bars[bi][s:e].lower().strip("'")
-        phones = pronouncing.phones_for_word(word)
+        text = bars[bi][s:e].lower().strip("'")
+        if " " in text:
+            count += 1
+            continue
+        phones = pronouncing.phones_for_word(text)
         if phones:
             rp = pronouncing.rhyming_part(phones[0])
             rp_syls = sum(1 for ph in rp.split() if any(c.isdigit() for c in ph))
@@ -317,11 +331,22 @@ def _build_rhyme_map(bars, rdf):
             by_key[f"_sl{sv}"].append(occ)
     if not rdf.empty:
         w2g = defaultdict(set)
+        phrase_entries = []
         for _, row in rdf.iterrows():
-            w2g[row["word"].lower()].add(row["rhyme_group"])
+            wl = row["word"].lower()
+            w2g[wl].add(row["rhyme_group"])
+            if " " in wl:
+                phrase_entries.append((wl, row["rhyme_group"]))
         for occ in occs:
             for gid in w2g.get(occ[3], set()):
                 by_key[f"_db{gid}"].append(occ)
+        for bi, bar in enumerate(bars):
+            bar_lower = bar.lower()
+            for phrase, gid in phrase_entries:
+                pat = r'\b' + re.escape(phrase) + r'\b'
+                for m in re.finditer(pat, bar_lower):
+                    occ = (bi, m.start(), m.end(), phrase)
+                    by_key[f"_db{gid}"].append(occ)
 
     raw = []
     for key, members in by_key.items():
