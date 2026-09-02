@@ -417,6 +417,21 @@ def _rate_verse(bars, density, internal_n, avg_syl, cmap=None):
     extras = {
         "allit": allit_n, "similes": simile_n, "unique": unique_r,
         "multi": multi_n, "consonance": conson_n,
+        "components": [
+            ("Multisyllabic", multi_sc, 0.25),
+            ("End Rhyme", rhyme_sc, 0.20),
+            ("Internal Rhyme", internal_sc, 0.20),
+            ("Rhyme Variety", cluster_sc, 0.15),
+            ("Flow", flow_sc, 0.10),
+            ("Vocabulary", vocab_sc, 0.10),
+        ],
+        "bonuses": [
+            ("Alliteration", allit_bonus, 0.8),
+            ("Similes", simile_bonus, 0.4),
+            ("Consonance", conson_bonus, 0.4),
+        ],
+        "unique_mult": unique_mult,
+        "repeat_mult": repeat_mult,
     }
     return round(score, 1), grade, extras
 
@@ -618,6 +633,59 @@ if _paste.strip():
         t5.metric("Similes", _extras["similes"])
         t6.metric("Conson.", _extras["consonance"])
         t7.metric("Unique", f"{_extras['unique']:.0%}")
+
+        with st.expander("Score Breakdown"):
+            _comps = _extras["components"]
+            _bons = _extras["bonuses"]
+            _comps_sorted = sorted(_comps, key=lambda x: x[1])
+            _breakdown_html = []
+            for name, sc, weight in _comps_sorted:
+                pct = sc / 10 * 100
+                wt_pct = int(weight * 100)
+                if pct >= 80:
+                    bar_clr = "#4CAF50"
+                elif pct >= 50:
+                    bar_clr = "#FF9800"
+                else:
+                    bar_clr = "#F44336"
+                _breakdown_html.append(
+                    f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">'
+                    f'<span style="min-width:120px;font-size:0.85em;">{name} ({wt_pct}%)</span>'
+                    f'<div style="flex:1;background:#333;border-radius:4px;height:16px;overflow:hidden;">'
+                    f'<div style="width:{pct:.0f}%;height:100%;background:{bar_clr};border-radius:4px;'
+                    f'transition:width 0.3s;"></div></div>'
+                    f'<span style="min-width:40px;text-align:right;font-size:0.85em;color:#888;">'
+                    f'{sc:.1f}/10</span></div>'
+                )
+            _bon_parts = []
+            for name, val, mx in _bons:
+                if val > 0:
+                    _bon_parts.append(f'{name} +{val:.1f}')
+            if _bon_parts:
+                _breakdown_html.append(
+                    f'<div style="margin-top:6px;font-size:0.82em;color:#888;">'
+                    f'Bonuses: {" · ".join(_bon_parts)}</div>'
+                )
+            _um = _extras["unique_mult"]
+            _rm = _extras["repeat_mult"]
+            if _um < 1.0 or _rm < 1.0:
+                _pen_parts = []
+                if _um < 1.0:
+                    _pen_parts.append(f'Low unique words ({_um:.0%})')
+                if _rm < 1.0:
+                    _pen_parts.append(f'Repeated lines ({_rm:.0%})')
+                _breakdown_html.append(
+                    f'<div style="margin-top:4px;font-size:0.82em;color:#F44336;">'
+                    f'Penalties: {" · ".join(_pen_parts)}</div>'
+                )
+            _weakest = _comps_sorted[0]
+            _breakdown_html.append(
+                f'<div style="margin-top:8px;padding:8px;background:#1a1a2e;border-radius:6px;'
+                f'border-left:3px solid #F44336;font-size:0.85em;">'
+                f'Biggest opportunity: <b>{_weakest[0]}</b> — scoring {_weakest[1]:.1f}/10 '
+                f'at {int(_weakest[2]*100)}% weight</div>'
+            )
+            st.markdown("\n".join(_breakdown_html), unsafe_allow_html=True)
 
         _syl_mode = st.checkbox("Show syllables", key="syl_toggle")
 
