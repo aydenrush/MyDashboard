@@ -101,7 +101,7 @@ if _best_run is not None:
 
 _run_deadline = st.select_slider(
     "I won't run later than", options=[f"{fmt_hour(h)}" for h in range(17, 24)],
-    value=fmt_hour(21), key="run_deadline",
+    value=fmt_hour(22), key="run_deadline",
 )
 _dl_map = {fmt_hour(h): h for h in range(17, 23)}
 _dl_hour = _dl_map.get(_run_deadline, 21)
