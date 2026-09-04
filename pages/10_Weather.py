@@ -125,7 +125,7 @@ st.divider()
 st.subheader("Today")
 
 _today_end = min(24, len(temps))
-_today_labels = [f"{h:02d} {fmt_hour(h)}" for h in range(_today_end)]
+_today_labels = [fmt_hour(h) for h in range(_today_end)]
 
 _today_df = pd.DataFrame({
     "Hour": _today_labels,
