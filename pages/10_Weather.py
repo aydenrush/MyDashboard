@@ -49,6 +49,7 @@ hours = weather["hourly"]
 temps = hours["temperature_2m"]
 apparent = hours.get("apparent_temperature", temps)
 humids = hours["relative_humidity_2m"]
+dewpoint = hours.get("dewpoint_2m", [None] * len(temps))
 precip = hours.get("precipitation_probability", [0] * len(temps))
 times = hours["time"]
 
@@ -62,13 +63,15 @@ current_temp = temps[now_hour] if now_hour < len(temps) else temps[-1]
 current_feels = apparent[now_hour] if now_hour < len(apparent) else apparent[-1]
 current_humid = humids[now_hour] if now_hour < len(humids) else humids[-1]
 current_precip = precip[now_hour] if now_hour < len(precip) else 0
+current_dp = dewpoint[now_hour] if now_hour < len(dewpoint) and dewpoint[now_hour] is not None else None
 cat = weather_category(current_feels)
 
-mc1, mc2, mc3, mc4 = st.columns(4)
+mc1, mc2, mc3, mc4, mc5 = st.columns(5)
 mc1.metric("Temperature", f"{current_temp:.0f}°F")
 mc2.metric("Feels Like", f"{current_feels:.0f}°F")
-mc3.metric("Humidity", f"{current_humid}%")
-mc4.metric("Rain Chance", f"{current_precip}%")
+mc3.metric("Dew Point", f"{current_dp:.0f}°F" if current_dp is not None else "—")
+mc4.metric("Humidity", f"{current_humid}%")
+mc5.metric("Rain Chance", f"{current_precip}%")
 st.caption(f"Dress for: **{cat.title()}**")
 
 st.divider()
@@ -76,7 +79,7 @@ st.divider()
 # ---------- best times ----------
 
 _best_out = best_outdoor_hour(temps, humids, precip, now_hour, apparent=apparent)
-_best_run = best_run_hour(temps, humids, precip, now_hour, apparent=apparent)
+_best_run = best_run_hour(temps, humids, precip, now_hour, apparent=apparent, dewpoint=dewpoint)
 
 bc1, bc2 = st.columns(2)
 if _best_out is not None:
@@ -91,12 +94,13 @@ if _best_out is not None:
 if _best_run is not None:
     _br_t = temps[_best_run]
     _br_f = apparent[_best_run]
-    _br_h = humids[_best_run]
+    _br_dp = dewpoint[_best_run] if _best_run < len(dewpoint) else None
     _br_p = precip[_best_run] if _best_run < len(precip) else 0
     _feels_note = f" (feels {_br_f:.0f}°F)" if abs(_br_f - _br_t) >= 2 else ""
+    _dp_note = f", dew point {_br_dp:.0f}°F" if _br_dp is not None else ""
     bc2.success(
         f"Best time to run: **{fmt_hour(_best_run)}** — "
-        f"{_br_t:.0f}°F{_feels_note}, {_br_h}% humidity"
+        f"{_br_t:.0f}°F{_feels_note}{_dp_note}"
         f"{f', {_br_p}% rain' if _br_p > 0 else ''}"
     )
 
@@ -106,18 +110,22 @@ _run_deadline = st.select_slider(
 )
 _dl_map = {fmt_hour(h): h for h in range(17, 23)}
 _dl_hour = _dl_map.get(_run_deadline, 21)
-_custom_best = best_run_hour(temps, humids, precip, now_hour, deadline=_dl_hour, apparent=apparent)
+_custom_best = best_run_hour(temps, humids, precip, now_hour, deadline=_dl_hour, apparent=apparent, dewpoint=dewpoint)
 if _custom_best is not None and _custom_best != _best_run:
     _cb_t = temps[_custom_best]
     _cb_f = apparent[_custom_best]
-    _cb_h = humids[_custom_best]
+    _cb_dp = dewpoint[_custom_best] if _custom_best < len(dewpoint) else None
     _feels_note = f" (feels {_cb_f:.0f}°F)" if abs(_cb_f - _cb_t) >= 2 else ""
-    st.caption(f"With that cutoff: best run time is {fmt_hour(_custom_best)} — {_cb_t:.0f}°F{_feels_note}, {_cb_h}% humidity")
+    _dp_note = f", dew point {_cb_dp:.0f}°F" if _cb_dp is not None else ""
+    st.caption(f"With that cutoff: best run time is {fmt_hour(_custom_best)} — {_cb_t:.0f}°F{_feels_note}{_dp_note}")
 
-high_humid_hours = [i for i in range(now_hour, min(24, len(humids))) if humids[i] >= 70]
-if high_humid_hours:
-    _hh_start = high_humid_hours[0]
-    st.warning(f"High humidity ({humids[_hh_start]}%+) starting around {fmt_hour(_hh_start)}")
+high_dp_hours = [i for i in range(now_hour, min(24, len(dewpoint)))
+                 if dewpoint[i] is not None and dewpoint[i] >= 65]
+if high_dp_hours:
+    _hdp_start = high_dp_hours[0]
+    _hdp_val = dewpoint[_hdp_start]
+    _severity = "Oppressive" if _hdp_val >= 70 else "Uncomfortable"
+    st.warning(f"{_severity} dew point ({_hdp_val:.0f}°F) starting around {fmt_hour(_hdp_start)} — consider an easy effort")
 
 st.divider()
 

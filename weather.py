@@ -7,7 +7,7 @@ def fetch_weather(lat, lon, days=3):
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}"
-        f"&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability"
+        f"&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,dewpoint_2m,precipitation_probability"
         f"&temperature_unit=fahrenheit&timezone=auto&forecast_days={days}"
     )
     try:
@@ -59,14 +59,18 @@ def best_outdoor_hour(temps, humids, precip, now_hour, earliest=6, latest=21, ap
     return best_hour
 
 
-def best_run_hour(temps, humids, precip, now_hour, deadline=21, apparent=None):
+def best_run_hour(temps, humids, precip, now_hour, deadline=21, apparent=None, dewpoint=None):
     best_hour = None
     best_score = float("inf")
     for hi in range(max(now_hour, 5), min(deadline + 1, len(temps))):
         t = apparent[hi] if apparent and hi < len(apparent) else temps[hi]
-        h = humids[hi]
+        dp = dewpoint[hi] if dewpoint and hi < len(dewpoint) else None
         p = precip[hi] if hi < len(precip) else 0
-        score = abs(t - 65) + (h * 0.7) + (p * 0.5)
+        if dp is not None:
+            dp_penalty = max(0, dp - 55) * 1.5
+        else:
+            dp_penalty = humids[hi] * 0.7
+        score = abs(t - 65) + dp_penalty + (p * 0.5)
         if score < best_score:
             best_score = score
             best_hour = hi
