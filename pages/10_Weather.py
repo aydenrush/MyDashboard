@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 import json
 from datetime import datetime, timedelta
 from auth import require_login
@@ -135,14 +136,27 @@ _today_df = pd.DataFrame({
     "Rain (%)": [precip[h] if h < len(precip) else 0 for h in range(_today_end)],
 })
 
+_hour_sort = _today_labels
 _chart_tab1, _chart_tab2, _chart_tab3 = st.tabs(["Temperature", "Humidity", "Rain Chance"])
 
 with _chart_tab1:
-    st.line_chart(_today_df, x="Hour", y=["Temp (°F)", "Feels Like (°F)"])
+    _temp_melt = _today_df[["Hour", "Temp (°F)", "Feels Like (°F)"]].melt(
+        "Hour", var_name="Metric", value_name="Temperature")
+    st.altair_chart(alt.Chart(_temp_melt).mark_line().encode(
+        x=alt.X("Hour:N", sort=_hour_sort, title="Hour"),
+        y=alt.Y("Temperature:Q", title="°F"),
+        color=alt.Color("Metric:N", legend=alt.Legend(title=None)),
+    ), use_container_width=True)
 with _chart_tab2:
-    st.line_chart(_today_df, x="Hour", y="Humidity (%)", color="#2196F3")
+    st.altair_chart(alt.Chart(_today_df).mark_line(color="#2196F3").encode(
+        x=alt.X("Hour:N", sort=_hour_sort, title="Hour"),
+        y=alt.Y("Humidity (%):Q", title="Humidity (%)"),
+    ), use_container_width=True)
 with _chart_tab3:
-    st.bar_chart(_today_df, x="Hour", y="Rain (%)", color="#4CAF50")
+    st.altair_chart(alt.Chart(_today_df).mark_bar(color="#4CAF50").encode(
+        x=alt.X("Hour:N", sort=_hour_sort, title="Hour"),
+        y=alt.Y("Rain (%):Q", title="Rain (%)"),
+    ), use_container_width=True)
 
 st.divider()
 
@@ -200,8 +214,18 @@ _all_hours_df = pd.DataFrame({
 })
 
 with st.expander("Full 3-Day Hourly"):
+    _all_sort = _all_labels[:len(temps)]
     _fc1, _fc2 = st.tabs(["Temperature & Humidity", "Rain Chance"])
     with _fc1:
-        st.line_chart(_all_hours_df, x="Hour", y=["Temp (°F)", "Humidity (%)"])
+        _all_melt = _all_hours_df[["Hour", "Temp (°F)", "Humidity (%)"]].melt(
+            "Hour", var_name="Metric", value_name="Value")
+        st.altair_chart(alt.Chart(_all_melt).mark_line().encode(
+            x=alt.X("Hour:N", sort=_all_sort, title="Hour"),
+            y=alt.Y("Value:Q"),
+            color=alt.Color("Metric:N", legend=alt.Legend(title=None)),
+        ), use_container_width=True)
     with _fc2:
-        st.bar_chart(_all_hours_df, x="Hour", y="Rain (%)", color="#4CAF50")
+        st.altair_chart(alt.Chart(_all_hours_df).mark_bar(color="#4CAF50").encode(
+            x=alt.X("Hour:N", sort=_all_sort, title="Hour"),
+            y=alt.Y("Rain (%):Q", title="Rain (%)"),
+        ), use_container_width=True)
